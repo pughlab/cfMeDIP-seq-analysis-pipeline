@@ -1,0 +1,5 @@
+software:
+  dependencies:
+    conda_env: pipeline-cfMeDIP-core
+data:
+  base_path: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data
