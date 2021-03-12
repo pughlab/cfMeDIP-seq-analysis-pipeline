@@ -5,7 +5,6 @@
 #SBATCH --mail-user=eric.zhao@rmp.uhn.ca
 
 . env.sh
-module load igenome-human/hg19
 
 echo 'Running on H4H cluster'
 snakemake -p --profile slurm

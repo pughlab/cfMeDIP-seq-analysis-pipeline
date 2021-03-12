@@ -3,3 +3,7 @@ software:
     conda_env: pipeline-cfMeDIP-core
 data:
   base_path: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data
+  cohorts: 
+    bratman_head_neck: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data/input/cohorts/bratman_headneck.csv
+    tgl_cfmedip_validation: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data/input/cohorts/tgl_cfmedip_validation.csv
+    masst: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data/input/cohorts/liberate_masst.csv
