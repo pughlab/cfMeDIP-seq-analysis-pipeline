@@ -1,0 +1,381 @@
+---
+title: "Bin Stats Exploration"
+author: "Eric Zhao"
+date: "4/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(GenomicRanges)
+library(tidyverse)
+library(hexbin)
+library(viridis)
+library(cowplot)
+library(pscl)
+library(MASS)
+library(annotatr)
+library(flexmix)
+library(countreg)
+library(modelr)
+library(diptest)
+library(rstan)
+```
+
+```{r cpg_annotations}
+annots = c('hg38_cpgs')
+annotations = build_annotations(genome = 'hg38', annotations = annots)
+
+```
+
+
+```{r human_results}
+chr <- read_tsv('bin_stats_human_chr3.tsv', comment = '#') %>%
+  mutate(coverage_int = mean_coverage %>% round %>% as.integer) %>%
+  filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0)
+
+annotations_cpg <- chr %>%
+  dplyr::select(
+    chr = bin_chr,
+    start = bin_start,
+    end = bin_end
+  ) %>%
+  GRanges() %>%
+  annotate_regions(
+    regions = .,
+    annotations = annotations,
+    ignore.strand = TRUE,
+    quiet = FALSE
+  ) %>%
+  as_tibble() %>%
+  mutate(
+    cpg_region = factor(gsub('hg38_cpg_', '', annot.type), levels = c('inter', 'shelves', 'shores', 'islands'))
+  ) %>%
+  group_by(seqnames, start, end) %>%
+  filter(as.integer(cpg_region) == max(as.integer(cpg_region))) %>%
+  ungroup()
+
+chr_cpg_annotated <- chr %>%
+  left_join(
+    annotations_cpg %>%
+      dplyr::select(
+        bin_chr = seqnames,
+        bin_start = start,
+        bin_end = end,
+        cpg_region
+      )
+  )
+
+chr_cpg_annotated %>%
+  filter(!is.na(cpg_region)) %>%
+  mutate(gc_content = round(gc_content, 2)) %>%
+  group_by(cpg_count, gc_content, cpg_region) %>%
+  summarise(mean_mean_coverage = mean(mean_coverage)) %>%
+  ungroup() %>%
+  ggplot(aes(
+    x = gc_content,
+    y = cpg_count,
+    fill = log(mean_mean_coverage)
+  )) +
+  geom_tile() +
+  scale_fill_viridis() +
+  facet_wrap(cpg_region ~ .)
+
+chr_cpg_annotated
+```
+
+```{r, fig.width = 25, fig.height = 20}
+chr_cpg_annotated_for_mix <- chr_cpg_annotated %>%
+  mutate(
+    cpg_bin = factor(round(round(cpg_count * 20 / max(cpg_count)) * max(cpg_count) / 20)),
+    gc_bin = factor(round(gc_content * 4, 1) / 4)
+  ) %>%
+  group_by(cpg_bin, gc_bin) %>%
+  filter(n() > 200) %>%
+  ungroup()
+
+chr_cpg_annotated_mix_results <- chr_cpg_annotated_for_mix %>%
+  plyr::ddply(c('cpg_bin', 'gc_bin'), function(z) {
+    message(sprintf('Running for gc_bin = %s and cpg_bin = %s', unique(z$gc_bin), unique(z$cpg_bin)))
+    tryCatch(
+      {
+        model <- flexmix(coverage_int ~ 1, data = z, k = 2, model = FLXMRnegbin())
+        message('refitting')
+        methylated_component = if_else(parameters(model, component=1)[[1]] > parameters(model, component=2)[[1]], 1, 2)
+        unmethylated_component = if_else(methylated_component == 1, 2, 1)
+        return(tibble(
+          methylated_intercept = parameters(model, component=methylated_component)[[1]],
+          unmethylated_intercept = parameters(model, component=unmethylated_component)[[1]],
+          methylated_theta = parameters(model, component=methylated_component)[[2]],
+          unmethylated_theta = parameters(model, component=unmethylated_component)[[2]],
+          methylated_prior = prior(model)[[methylated_component]],
+          unmethylated_prior = prior(model)[[unmethylated_component]],
+          log_likelihood = logLik(model) %>% as.numeric
+        ))
+      },
+      error = function(e) {
+        message('Error occurred. Trying single-component model.')
+        tryCatch({
+          dip_test <- z %>% .$mean_coverage %>% dip.test() %>% .$p.value
+          
+          if (dip_test < 0.05) {
+            message('Multimodal distribution. Reporting methylated values.')
+            # multimodal
+            model <- flexmix(
+              coverage_int ~ 1,
+              data = z %>% filter(mean_coverage > mean(mean_coverage) / 5),
+              k = 1,
+              model = FLXMRnegbin()
+            )
+            return(tibble(
+              methylated_intercept = parameters(model, component=1)[[1]],
+              unmethylated_intercept = NA,
+              methylated_theta = parameters(model, component=1)[[2]],
+              unmethylated_theta = NA,
+              methylated_prior = prior(model)[[1]],
+              unmethylated_prior = NA,
+              log_likelihood = logLik(model) %>% as.numeric
+            ))
+          } else {
+            message('Unimodal distribution. Reporting unmethylated values.')
+            model <- flexmix(
+              coverage_int ~ 1,
+              data = z,
+              k = 1,
+              model = FLXMRnegbin()
+            )
+            return(tibble(
+              methylated_intercept = NA,
+              unmethylated_intercept = parameters(model, component=1)[[1]],
+              methylated_theta = NA,
+              unmethylated_theta = parameters(model, component=1)[[2]],
+              methylated_prior = NA,
+              unmethylated_prior = prior(model)[[1]],
+              log_likelihood = logLik(model) %>% as.numeric
+            ))
+          }
+        },
+        error = function(e) {
+          message('ERROR. Skipping row.')
+        })
+      }
+    )
+  })
+
+chr_cpg_annotated_for_mix %>%
+  group_by(gc_bin, cpg_bin) %>%
+  summarise(
+    lower_limit = min(mean_coverage),
+    upper_limit = max(mean_coverage),
+    count = n()
+  ) %>%
+  ungroup() %>%
+  plyr::ddply(c('gc_bin', 'cpg_bin'), function(z) {
+    x = z$lower_limit : z$upper_limit
+    return(tibble(
+      gc_bin = rep(z$gc_bin, length(x)),
+      cpg_bin = rep(z$cpg_bin, length(x)),
+      count = rep(z$count, length(x)),
+      x = x))
+  }) %>%
+  right_join(chr_cpg_annotated_mix_results, by = c('gc_bin', 'cpg_bin')) %>%
+  mutate(
+    methylated_y = dnbinom(x, size = methylated_theta, mu = exp(methylated_intercept)),
+    unmethylated_y = dnbinom(x, size = unmethylated_theta, mu = exp(unmethylated_intercept))
+  ) %>%
+  dplyr::select(gc_bin, cpg_bin, x, methylated_y, unmethylated_y, count) %>%
+  gather(type, value, -gc_bin, -cpg_bin, -x, -count) %>%
+  mutate(scaled_value = value * count) %>%
+  ggplot(aes(
+    x = x
+  )) +
+  geom_histogram(aes(
+    x = coverage_int
+  ), data = chr_cpg_annotated_for_mix %>%
+    filter(
+      gc_bin %in% chr_cpg_annotated_mix_results$gc_bin,
+      cpg_bin %in% chr_cpg_annotated_mix_results$cpg_bin
+    )
+  ) +
+  geom_point(aes(
+    y = scaled_value,
+    color = type
+  )) +
+  geom_line(aes(
+    y = scaled_value,
+    color = type
+  )) +
+  geom_vline(aes(
+    xintercept = median_coverage
+  ), data = chr_cpg_annotated_for_mix %>% group_by(gc_bin, cpg_bin) %>% summarise(median_coverage = median(coverage_int))) +
+  facet_wrap(~ cpg_bin + gc_bin, scales='free')
+
+chr_cpg_annotated_for_mix %>%
+  filter(cpg_bin == 16, gc_bin == 0.46) %>%
+  .$coverage_int %>% dip.test(x = .)
+```
+
+```{r analysis_of_fits}
+chr_cpg_annotated_mix_results %>%
+  mutate(
+    mu = exp(methylated_intercept)
+  ) %>%
+  ggplot(aes(
+    x = cpg_bin,
+    y = mu,
+    group = gc_bin,
+    color = gc_bin
+  )) +
+  geom_point() +
+  geom_line() +
+  scale_fill_viridis()
+
+chr_cpg_annotated_mix_results
+```
+
+```{r determining_the_zero_profile}
+chr_cpg_annotated_mix_results %>%
+  filter(cpg_bin == 0) %>%
+  mutate(
+    mu = exp(unmethylated_intercept),
+    theta = unmethylated_theta
+  ) %>%
+  dplyr::select(gc_bin, cpg_bin, mu, theta) %>%
+  gather(coefficient, value, -gc_bin, -cpg_bin) %>%
+  filter(!is.infinite(value)) %>%
+  ggplot(aes(
+    x = gc_bin,
+    y = value,
+    group = coefficient,
+    color = coefficient
+  )) +
+  geom_point() +
+  geom_line() +
+  scale_fill_viridis()
+
+zero_profile_gc_model_output <- chr_cpg_annotated %>%
+  filter(cpg_count == 0) %>%
+  mutate(
+    gc_bin = factor(round(gc_content * 4, 1) / 4)
+  ) %>%
+  group_by(gc_bin) %>%
+  filter(n() > 50) %>%
+  ungroup() %>%
+  plyr::ddply(c('gc_bin'), function(z) {
+    print(sprintf('Running for gc_bin = %s', z$gc_bin %>% unique))
+    if (all(z$coverage_int == 0)) {
+      return(tibble(
+        log_mu = -Inf,
+        theta = Inf,
+        log_likelihood = NA,
+        count = nrow(z)
+      ))
+    } else {
+      tryCatch({
+        zero_model <- flexmix(coverage_int ~ 1, data = z, k = 1, model = FLXMRnegbin())
+        return(tibble(
+          log_mu = parameters(zero_model, component=1)[[1]],
+          theta = parameters(zero_model, component=1)[[2]],
+          log_likelihood = logLik(zero_model) %>% as.numeric,
+          count = nrow(z)
+        ))
+      }, error = function(e) {
+        message('Error: skipping this GC bin')
+        NULL
+      })
+    }
+  }) %>%
+  mutate(mu = exp(log_mu))
+
+mu_fit <- nls(
+  mu ~ a / (1 + exp(-b * (gc_bin - c))), start=list(a=1,b=10,c=0.6),
+  data = zero_profile_gc_model_output %>% mutate(gc_bin = gc_bin %>% as.character %>% as.numeric),
+  control = nls.control(warnOnly = TRUE, maxiter=1000)
+)
+mu_fit_coef = summary(mu_fit)$coef[, 1]
+
+theta_fit <- nls(
+  theta ~ a / (1 + exp(-b * (gc_bin - c))), start=list(a=1,b=10,c=0.6),
+  data = zero_profile_gc_model_output %>% mutate(gc_bin = gc_bin %>% as.character %>% as.numeric) %>% filter(!is.infinite(theta)),
+  control = nls.control(warnOnly = TRUE, maxiter=1000)
+)
+theta_fit_coef = summary(theta_fit)$coef[, 1]
+
+zero_profile_gc_model_output %>%
+  mutate(gc_bin = as.numeric(as.character(gc_bin))) %>%
+  dplyr::select(-log_mu) %>%
+  gather(parameter, value, -count, -log_likelihood, -gc_bin) %>%
+  filter(!is.infinite(value)) %>%
+  ggplot(aes(
+    x = gc_bin,
+    y = value
+  )) +
+  geom_point(aes(
+    color = parameter,
+    group = parameter,
+    size = count
+  )) +
+  geom_line(aes(
+      x = gc_content,
+      y = value,
+      color = metric,
+      group = metric
+    ),
+    data = tibble(
+        gc_content = seq(0, 1, 0.01)
+      ) %>%
+      mutate(
+        modeled_mu = mu_fit_coef[['a']] / (1 + exp(- mu_fit_coef[['b']] * (gc_content - mu_fit_coef[['c']]))),
+        modeled_theta = theta_fit_coef[['a']] / (1 + exp(- theta_fit_coef[['b']] * (gc_content - theta_fit_coef[['c']])))
+      ) %>%
+      gather(metric, value, -gc_content)
+  )
+
+tibble(
+  gc_content = seq(0, 0.8, 0.1)
+) %>%
+  mutate(
+    mu = mu_fit_coef[['a']] / (1 + exp(- mu_fit_coef[['b']] * (gc_content - mu_fit_coef[['c']]))),
+    theta = theta_fit_coef[['a']] / (1 + exp(- theta_fit_coef[['b']] * (gc_content - theta_fit_coef[['c']])))
+  ) %>%
+  plyr::ddply('gc_content', function(z) {
+    tibble(x = 0:10) %>%
+      mutate(y = dnbinom(x, z$theta, mu = z$mu))
+  }) %>%
+  ggplot(aes(
+    x = x,
+    y = y
+  )) +
+  facet_wrap(~ gc_content) +
+  geom_bar(stat = 'identity') +
+  ggtitle('Modeled non-specific binding by GC content (for CpG count = 0)')
+```
+
+```{r stan_model}
+# Sample
+
+stan_input <- list(
+  N = nrow(chr_cpg_annotated),
+  coverage = chr_cpg_annotated$coverage_int,
+  ns_mu_a = mu_fit_coef[['a']],
+  ns_mu_b = mu_fit_coef[['b']],
+  ns_mu_c = mu_fit_coef[['c']],
+  ns_theta_a = theta_fit_coef[['a']],
+  ns_theta_b = theta_fit_coef[['b']],
+  ns_theta_c = theta_fit_coef[['c']],
+  cpg_count = chr_cpg_annotated$cpg_count,
+  gc_content = chr_cpg_annotated$gc_content
+)
+
+stan_fit <- stan(
+  file = 'fit_cfmedip.stan',
+  data = stan_input,
+  chains = 4,
+  warmup = 1000,
+  iter = 2000,
+  cores = 1,
+  refresh = 0
+)
+)
+```
