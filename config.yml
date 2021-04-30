@@ -1,9 +1,20 @@
-software:
+paths:
   dependencies:
     conda_env: pipeline-cfMeDIP-core
+  bwa: /cluster/home/zhaoe/software/conda/envs/pipeline-cfMeDIP-core/bin/bwa
+  bwa_index: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_arabidopsis_chr_1_3/BWA_index/hg38_arabidopsis
+  samtools: /cluster/home/zhaoe/software/conda/envs/pipeline-cfMeDIP-core/bin/samtools
+  genome: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_arabidopsis_chr_1_3/hg38_arabidopsis_chr_1_3.fa
+  barcodes: /cluster/projects/pughlab/projects/ezhao/assets/reference/barcodes/barcode_idt.txt
+  bsgenome:
+    human: BSgenome.Hsapiens.UCSC.hg38
+    arabidopsis: BSgenome.Athaliana.TAIR.TAIR9
 data:
-  base_path: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data
-  cohorts: 
-    bratman_head_neck: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data/input/cohorts/bratman_headneck.csv
-    tgl_cfmedip_validation: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data/input/cohorts/tgl_cfmedip_validation.csv
-    masst: /cluster/projects/scottgroup/people/eric/projects/cfMeDIPseq_pipeline_test/data/input/cohorts/liberate_masst.csv
+  base_path: /cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline
+  cohorts:
+    comparison:
+      samplesheet: /cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline/input/cohorts/samplesheet_comparison_cfmedip.csv
+      active: True
+    test:
+      samplesheet: /cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline/input/cohorts/samplesheet_comparison_cfmedip_test.csv
+      active: False
