@@ -1,33 +1,3 @@
----
-title: "Bin Stats Exploration"
-author: "Eric Zhao"
-date: "4/23/2021"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
-library(GenomicRanges)
-library(tidyverse)
-library(hexbin)
-library(viridis)
-library(cowplot)
-library(pscl)
-library(MASS)
-library(annotatr)
-library(flexmix)
-library(countreg)
-library(modelr)
-library(diptest)
-library(rstan)
-```
-
-```{r cpg_annotations}
-annots = c('hg38_cpgs')
-annotations = build_annotations(genome = 'hg38', annotations = annots)
-
-```
 
 
 ```{r human_results}

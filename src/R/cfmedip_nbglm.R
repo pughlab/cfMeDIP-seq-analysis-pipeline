@@ -220,7 +220,6 @@ if (!is.null(args[['modelout']])) {
   model_data <- list(
     final_model = methylated_fit,
     iteration_models = methylated_fits,
-    input = bins,
     zero_model = list(
         model_output = zero_profile_gc_model_output,
         theta_fit = zero_theta_fit,

@@ -42,7 +42,11 @@ rule all:
         expand(
             path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_nbglm.tsv',
             sample = all_samples_list
-        )
+        ),
+        expand(
+            path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_EPIC_positions.tsv',
+            sample = all_samples_list
+        ),
 
 rule gunzip_fastq:
     input:
@@ -246,5 +250,14 @@ rule cfmedip_nbglm:
     resources: cpus=1, mem_mb=16000, time_min='5-00:00:00'
     shell:
         'Rscript src/R/cfmedip_nbglm.R -i {input} -o {output.fit} --modelout {output.model}'
+
+rule cfmedip_array_positions:
+    input:
+        fit=path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_nbglm.tsv',
+        manifest='data/methylation_array_manifest/{array}.hg38.manifest.tsv'
+    output:
+        path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_{array}_positions.tsv',
+    shell:
+        'Rscript ~/git/cfMeDIP-seq-analysis-pipeline/src/R/cfmedip_to_array_sites.R -c {input.fit} -m {input.manifest} -o {output}'
 
 

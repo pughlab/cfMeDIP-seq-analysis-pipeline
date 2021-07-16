@@ -113,6 +113,7 @@ bin_coverage <- bind_cols(
     ) %>%
     group_by(bin_chr, bin_start, bin_end) %>%
     summarise(
+        n_fragments = n(),
         coverage_bp = sum(overlap_length),
         mean_fragment_length = mean(width),
         mean_fragment_mapq = mean(mean_mapq)
@@ -126,11 +127,11 @@ bin_coverage <- bind_cols(
     ) %>%
     replace_na(list(coverage_bp = 0)) %>%
     arrange(bin_chr, bin_start) %>%
-    mutate(mean_coverage = coverage_bp / 300) %>%
+    mutate(mean_coverage = coverage_bp / BIN_WIDTH) %>%
     mutate(
         seq = getSeq(
             bsgenome,
-            names = rep(bsgenome_chr, n()),,
+            names = rep(bsgenome_chr, n()),
             start = bin_start,
             end = bin_end
         ) %>% as.character
