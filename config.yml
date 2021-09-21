@@ -1,6 +1,7 @@
 paths:
   dependencies:
     conda_env: pipeline-cfMeDIP-core
+    medestrand_path: /cluster/home/zhaoe/git/MeDEStrand
   bwa: /cluster/home/zhaoe/software/conda/envs/pipeline-cfMeDIP-core/bin/bwa
   bwa_index: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_arabidopsis_chr_1_3/BWA_index/hg38_arabidopsis
   samtools: /cluster/home/zhaoe/software/conda/envs/pipeline-cfMeDIP-core/bin/samtools

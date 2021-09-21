@@ -13,6 +13,7 @@ def get_cohort_data(cohort):
 
 def get_fastq_path(sample, library, read_in_pair=1):
     library = int(library)
+    all_samples = get_all_samples()
     sample_line = all_samples[
         (all_samples.sample_name == sample) &
         (all_samples.library_index == library) &
@@ -20,14 +21,17 @@ def get_fastq_path(sample, library, read_in_pair=1):
     ]
     return(sample_line.path.to_list()[0])
 
-all_samples = pd.concat([
-    get_cohort_data(cohort_name)
-    for cohort_name
-    in config['data']['cohorts']
-    if config['data']['cohorts'][cohort_name]['active']
-    ])
+def get_all_samples():
+    all_samples = pd.concat([
+        get_cohort_data(cohort_name)
+        for cohort_name
+        in config['data']['cohorts']
+        if config['data']['cohorts'][cohort_name]['active']
+        ])
+    return(all_samples)
 
-all_samples_list = all_samples.sample_name.tolist()
+def get_all_samples_list():
+    return(get_all_samples().sample_name.unique().tolist())
 
 def clean(command):
     command = command.replace('\n', ' ').replace('\t', ' ')
@@ -37,16 +41,27 @@ def clean(command):
 
 rule all:
     input:
-        #expand(path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats.tsv', sample=all_samples.sample_name.unique()),
+        #expand(path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats.tsv', sample=get_all_samples().sample_name.unique()),
         #expand('/cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline/samples/CMP-01-02-cfDNA-02/merged/bin_stats/bin_stats_fit_{method}.Rds', method=['LBFGS', 'VB', 'MCMC'])
+        #expand(
+        #    path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_nbglm.tsv',
+        #    sample = get_all_samples_list()
+        #),
+        #expand(
+        #    path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_EPIC_positions.tsv',
+        #    sample = get_all_samples_list()
+        #),
         expand(
-            path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_nbglm.tsv',
-            sample = all_samples_list
-        ),
-        expand(
-            path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_EPIC_positions.tsv',
-            sample = all_samples_list
-        ),
+            path_to_data + '/samples/{sample}/merged/medestrand/medestrand_output.Rds',
+            sample = get_all_samples_list()
+        )
+
+rule test:
+    output:
+        'test'
+    conda: 'conda_env/cfmedip_r.yml'
+    shell:
+        'touch {output}'
 
 rule gunzip_fastq:
     input:
@@ -128,7 +143,7 @@ rule sam_to_sorted_bam:
         ''')
 
 def get_libraries_of_sample(sample):
-    filtered_table = all_samples[all_samples.sample_name == sample]
+    filtered_table = get_all_samples()[get_all_samples().sample_name == sample]
     return(list(set(filtered_table.library_index.to_list())))
 
 rule merge_bam:
@@ -160,6 +175,7 @@ rule bam_to_wig:
     output:
         path_to_data + '/samples/{sample}/bin_metrics/COUNTwiggle.wig.txt',
     resources: mem_mb=30000, time_min='72:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
     shell:
         clean(r'''
         Rscript src/bam_to_wig.R -b {input} -o {output}
@@ -171,6 +187,7 @@ rule bam_to_binmethyl:
     output:
         path_to_data + '/samples/{sample}/bin_metrics/medestrand.binmethyl.txt',
     resources: mem_mb=30000, time_min='72:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
     shell:
         clean(r'''
         Rscript src/correct_cpg.R -b {input} -o {output}
@@ -182,6 +199,7 @@ rule binmethyl_to_wig:
         wig=path_to_data + '/samples/{sample}/bin_metrics/COUNTwiggle.wig.txt'
     output:
         path_to_data + '/samples/{sample}/bin_metrics/medestrand.binmethyl.wig',
+    conda: 'conda_env/cfmedip_r.yml'
     shell:
         'Rscript src/binmethyl_to_wig.R -b {input.binmethyl} -m {input.wig} -o {output}'
 
@@ -202,6 +220,7 @@ rule bam_bin_stats:
         bsgenome = lambda wildcards:config['paths']['bsgenome'][wildcards.species],
         bsgenome_chr = lambda wildcards: get_bsgenome_chrom(wildcards.species, wildcards.chrom)
     resources: cpus=1, mem_mb=16000, time_min='24:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
     shell:
         clean('''
         Rscript src/R/bin_stats.R
@@ -237,6 +256,7 @@ rule fit_bin_stats:
     output:
         path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_{method}.Rds'
     resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
     shell:
         'Rscript src/R/fit_cpg_bins.R -i {input} -o {output} --method {wildcards.method}'
 
@@ -248,6 +268,7 @@ rule cfmedip_nbglm:
         fit=path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_nbglm.tsv',
         model=path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_model_nbglm.Rds',
     resources: cpus=1, mem_mb=16000, time_min='5-00:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
     shell:
         'Rscript src/R/cfmedip_nbglm.R -i {input} -o {output.fit} --modelout {output.model}'
 
@@ -257,7 +278,27 @@ rule cfmedip_array_positions:
         manifest='data/methylation_array_manifest/{array}.hg38.manifest.tsv'
     output:
         path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_{array}_positions.tsv',
+    resources: cpus=1, mem_mb=16000, time_min='5-00:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
     shell:
         'Rscript ~/git/cfMeDIP-seq-analysis-pipeline/src/R/cfmedip_to_array_sites.R -c {input.fit} -m {input.manifest} -o {output}'
 
+rule run_medestrand:
+    input:
+        path_to_data + '/samples/{sample}/merged/bwa_mem/aligned.sorted.bam'
+    output:
+        path_to_data + '/samples/{sample}/merged/medestrand/medestrand_output.Rds',
+    resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
+    shell:
+        'Rscript src/R/run_medestrand.R -b {{input}} -o {{output}} -m {}'.format(config['paths']['dependencies']['medestrand_path'])
+
+rule tcga_tissue_signature:
+    input:
+        ancient('/cluster/projects/pughlab/projects/ezhao/data/TCGA/download/methylation/450k/TCGA-COAD')
+    output:
+        '/cluster/projects/pughlab/projects/ezhao/projects/COMPARISON/output/signatures/tcga_coad_matrix.Rds'
+    resources: cpus=1, mem_mb=16000, time_min='5-00:00:00'
+    shell:
+        'Rscript src/methylation_signatures/tcga_colorectal_signature.R -t {input} -o {output}'
 
