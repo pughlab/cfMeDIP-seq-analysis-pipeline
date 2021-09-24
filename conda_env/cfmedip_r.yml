@@ -1,0 +1,23 @@
+name: cfmedip_r
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - r-devtools
+  - r-docopt
+  - r-doparallel
+  - r-flexmix
+  - r-glmnet
+  - r-cowplot
+  - r-rmarkdown
+  - r-roxygen2
+  - r-yaml
+  - r-tidyverse
+  - bioconductor-bsgenome
+  - bioconductor-bsgenome.hsapiens.ucsc.hg38
+  - bioconductor-bsgenome.athaliana.tair.tair9
+  - bioconductor-genomicranges
+  - bioconductor-tcgabiolinks
+  - bioconductor-minfi
+  - bioconductor-medips
+  - bioconductor-champ
