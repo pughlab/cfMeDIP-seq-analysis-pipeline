@@ -91,7 +91,6 @@ rule extract_barcodes:
             --blist ''' + config['paths']['barcodes']
         )
 
-
 def get_read_group_from_fastq(fastq_file, sample_name):
     with gzip.open(fastq_file, 'rt') as fastq:
         header = next(fastq)
@@ -181,28 +180,6 @@ rule bam_to_wig:
         Rscript src/bam_to_wig.R -b {input} -o {output}
         ''')
 
-rule bam_to_binmethyl:
-    input:
-        path_to_data + '/samples/{sample}/bwa_mem/aligned.sorted.markdup.bam',
-    output:
-        path_to_data + '/samples/{sample}/bin_metrics/medestrand.binmethyl.txt',
-    resources: mem_mb=30000, time_min='72:00:00'
-    conda: 'conda_env/cfmedip_r.yml'
-    shell:
-        clean(r'''
-        Rscript src/correct_cpg.R -b {input} -o {output}
-        ''')
-
-rule binmethyl_to_wig:
-    input:
-        binmethyl=path_to_data + '/samples/{sample}/bin_metrics/medestrand.binmethyl.txt',
-        wig=path_to_data + '/samples/{sample}/bin_metrics/COUNTwiggle.wig.txt'
-    output:
-        path_to_data + '/samples/{sample}/bin_metrics/medestrand.binmethyl.wig',
-    conda: 'conda_env/cfmedip_r.yml'
-    shell:
-        'Rscript src/binmethyl_to_wig.R -b {input.binmethyl} -m {input.wig} -o {output}'
-
 def get_bsgenome_chrom(species, chrom):
     chrom_map = {'Arabidopsis1': 'Chr1', 'Arabidopsis3': 'Chr3'}
     if species == 'human':
@@ -285,7 +262,7 @@ rule cfmedip_array_positions:
 
 rule run_medestrand:
     input:
-        path_to_data + '/samples/{sample}/merged/bwa_mem/aligned.sorted.bam'
+        path_to_data + '/samples/{sample}/merged/bwa_mem/aligned.sorted.markdup.bam',
     output:
         path_to_data + '/samples/{sample}/merged/medestrand/medestrand_output.Rds',
     resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
