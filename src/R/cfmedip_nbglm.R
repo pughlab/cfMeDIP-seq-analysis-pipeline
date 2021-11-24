@@ -32,7 +32,7 @@ PERCENT_CHANGE_THRESHOLD = 0.1
 
 message('- Importing data.')
 
-bins <- read_tsv(args[['input']], comment = '#', col_types='ciiiddddi') %>%
+bins <- read_tsv(args[['input']], comment = '#', col_types='ciiddddddi') %>%
   mutate(coverage_int = mean_coverage %>% round %>% as.integer) %>%
   filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0) %>%
   mutate(

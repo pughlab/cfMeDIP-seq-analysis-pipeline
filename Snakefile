@@ -43,10 +43,10 @@ rule all:
     input:
         #expand(path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats.tsv', sample=get_all_samples().sample_name.unique()),
         #expand('/cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline/samples/CMP-01-02-cfDNA-02/merged/bin_stats/bin_stats_fit_{method}.Rds', method=['LBFGS', 'VB', 'MCMC'])
-        #expand(
-        #    path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_nbglm.tsv',
-        #    sample = get_all_samples_list()
-        #),
+        expand(
+            path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_fit_nbglm.tsv',
+            sample = get_all_samples_list()
+        ),
         #expand(
         #    path_to_data + '/samples/{sample}/merged/bin_stats/bin_stats_EPIC_positions.tsv',
         #    sample = get_all_samples_list()
@@ -67,18 +67,18 @@ rule gunzip_fastq:
     input:
         lambda wildcards: get_fastq_path(wildcards.sample, int(wildcards.lib), int(wildcards.read)),
     output:
-        path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/R{read}.fastq',
+        temp(path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/R{read}.fastq')
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     shell:
         'gunzip -dc {input} > {output}'
 
 rule extract_barcodes:
     input:
-        R1 =    path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/R1.fastq',
-        R2 =    path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/R2.fastq',
+        R1 = path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/R1.fastq',
+        R2 = path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/R2.fastq',
     output:
-        R1 =    path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/extract_barcode_R1.fastq',
-        R2 =    path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/extract_barcode_R2.fastq'
+        R1 = temp(path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/extract_barcode_R1.fastq'),
+        R2 = temp(path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/extract_barcode_R2.fastq')
     params:
         outprefix = lambda wildcards, output: output.R1.split('_barcode_')[0]
     resources: cpus=1, mem_mb=16000, time_min='5-00:00:00'
@@ -109,7 +109,7 @@ rule bwa_mem:
         path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/extract_barcode_R1.fastq',
         path_to_data + '/samples/{sample}/libraries/lib_{lib}/fastq/extract_barcode_R2.fastq',
     output:
-        path_to_data + '/samples/{sample}/libraries/lib_{lib}/bwa_mem/aligned.sam'
+        temp(path_to_data + '/samples/{sample}/libraries/lib_{lib}/bwa_mem/aligned.sam')
     resources: cpus=4, mem_mb=16000, time_min='72:00:00'
     params:
         read_group = lambda wildcards, input: get_read_group_from_fastq(
@@ -152,7 +152,7 @@ rule merge_bam:
                 lib=get_libraries_of_sample(wildcards.sample)
         )
     output:
-        path_to_data + '/samples/{sample}/merged/bwa_mem/aligned.sorted.bam'
+        temp(path_to_data + '/samples/{sample}/merged/bwa_mem/aligned.sorted.bam')
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     shell:
         'samtools merge {output} {input} && samtools index {output}'
@@ -191,12 +191,12 @@ rule bam_bin_stats:
     input:
         path_to_data + '/samples/{sample}/merged/bwa_mem/aligned.sorted.markdup.bam',
     output:
-        binstat=path_to_data + '/samples/{sample}/merged/bin_stats/by_chromosome/bin_stats_{species}_{chrom}.tsv',
+        binstat=temp(path_to_data + '/samples/{sample}/merged/bin_stats/by_chromosome/bin_stats_{species}_{chrom}.tsv'),
         filtered=path_to_data + '/samples/{sample}/merged/bin_stats/filtered_out/bin_stats_{species}_{chrom}.tsv',
     params:
         bsgenome = lambda wildcards:config['paths']['bsgenome'][wildcards.species],
         bsgenome_chr = lambda wildcards: get_bsgenome_chrom(wildcards.species, wildcards.chrom)
-    resources: cpus=1, mem_mb=16000, time_min='24:00:00'
+    resources: cpus=1, mem_mb=30000, time_min='24:00:00'
     conda: 'conda_env/cfmedip_r.yml'
     shell:
         clean('''
