@@ -32,7 +32,7 @@ PERCENT_CHANGE_THRESHOLD = 0.1
 
 message('- Importing data.')
 
-bins <- read_tsv(args[['input']], comment = '#', col_types='ciiiddddi') %>%
+bins <- read_tsv(args[['input']], comment = '#', col_types='ciiddddddi') %>%
   mutate(coverage_int = mean_coverage %>% round %>% as.integer) %>%
   filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0) %>%
   mutate(
@@ -220,7 +220,6 @@ if (!is.null(args[['modelout']])) {
   model_data <- list(
     final_model = methylated_fit,
     iteration_models = methylated_fits,
-    input = bins,
     zero_model = list(
         model_output = zero_profile_gc_model_output,
         theta_fit = zero_theta_fit,
