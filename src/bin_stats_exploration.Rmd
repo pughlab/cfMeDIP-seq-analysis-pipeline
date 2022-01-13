@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, fig.path = 'figures/', dev = c('png', 'pdf'), dpi = 300)
 
 library(GenomicRanges)
 library(tidyverse)
@@ -29,6 +29,200 @@ annotations = build_annotations(genome = 'hg38', annotations = annots)
 
 ```
 
+```{r custom_functions}
+plot_scatter_bin_methylation_linear <- function(bin_methylation_data, nbfit) {
+  scatterplot_data <- bin_methylation_data %>%
+    group_by(gc_bin) %>%
+    summarise(max_cpg_count = max(cpg_count)) %>%
+    ungroup() %>%
+    filter(max_cpg_count > 0) %>%
+    expand_grid(tibble(cpg_count = 1:50)) %>%
+    filter(cpg_count <= max_cpg_count) %>%
+    mutate(
+      gc_content = gc_bin %>% as.character %>% as.numeric
+    ) %>%
+    mutate(
+      predicted_coverage = predict(nbfit, newdata=.)
+    )
+
+  bin_methylation_subset %>%
+    ggplot(aes(
+      x = cpg_count,
+      y = coverage_int
+    )) +
+    geom_point(alpha=0.1, shape=20) +
+    geom_line(aes(
+      x = cpg_count,
+      y = predicted_coverage
+    ), color = 'red', data = scatterplot_data) +
+    facet_wrap(~ gc_bin, scales='free') +
+    ylim(0, 100) +
+    labs(
+      x = 'CpG count',
+      y = 'Coverage'
+    )
+}
+plot_scatter_bin_methylation <- function(bin_methylation_data, nbfit) {
+  scatterplot_data <- bin_methylation_data %>%
+    group_by(gc_bin) %>%
+    summarise(max_cpg_count = max(cpg_count)) %>%
+    ungroup() %>%
+    filter(max_cpg_count > 0) %>%
+    expand_grid(tibble(cpg_count = 1:50)) %>%
+    filter(cpg_count <= max_cpg_count) %>%
+    mutate(
+      gc_content = gc_bin %>% as.character %>% as.numeric
+    ) %>%
+    mutate(
+      predicted_coverage = exp(predict(nbfit, newdata=.))
+    )
+
+  bin_methylation_subset %>%
+    ggplot(aes(
+      x = cpg_count,
+      y = coverage_int
+    )) +
+    geom_point(alpha=0.1, shape=20) +
+    geom_line(aes(
+      x = cpg_count,
+      y = predicted_coverage
+    ), color = 'red', data = scatterplot_data) +
+    facet_wrap(~ gc_bin, scales='free') +
+    ylim(0, 100) +
+    labs(
+      x = 'CpG count',
+      y = 'Coverage'
+    )
+}
+
+plot_bin_methylation_fit <- function(bin_methylation_data, nbfit) {
+  bin_methylation_fit_plot_data_raw <- bin_methylation_data %>%
+    group_by(cpg_bin, gc_bin) %>%
+    summarise(count = n()) %>%
+    ungroup() %>%
+    expand_grid(tibble(x = 1:50)) %>%
+    mutate(
+      gc_content = gc_bin %>% as.character %>% as.numeric,
+      cpg_count = cpg_bin %>% as.character %>% as.integer
+    )
+  
+  bin_methylation_fit_plot_data <- bin_methylation_fit_plot_data_raw %>%
+    mutate(
+      unmethylated_mu = exp(predict(zero_mu_fit, newdata=.)),
+    unmethylated_theta = exp(predict(zero_theta_fit, newdata=.)),
+      unmethylated_fit = dnbinom(x, mu = unmethylated_mu, size = unmethylated_theta) * count,
+      methylated_mu = ifelse(cpg_count == 0, NA, exp(predict(nbfit, newdata = . ))),
+      methylated_theta = nbfit$theta,
+      methylated_fit = dnbinom(x, mu = methylated_mu, size =  methylated_theta) * count
+    ) %>%
+    filter(!is.nan(methylated_fit))
+    
+  bin_methylation_fit_plot_data_reshaped <- bin_methylation_fit_plot_data %>%
+    dplyr::select(cpg_bin, gc_bin, x, methylated_fit, unmethylated_fit) %>%
+    gather(fit, value, -cpg_bin, -gc_bin, -x) %>%
+    arrange(cpg_bin, gc_bin) %>%
+    mutate(facet_label = sprintf(
+        '%s CpGs, GC: %s%%',
+        cpg_bin %>% as.character,
+        gc_bin %>% as.character %>% as.numeric * 100 %>% round
+      )) %>%
+    mutate(facet_label = factor(facet_label, levels = unique(facet_label)))
+  
+  return(
+    bin_methylation_data %>%
+      arrange(cpg_bin, gc_bin) %>%
+      mutate(facet_label = sprintf(
+        '%s CpGs, GC: %s%%',
+        cpg_bin %>% as.character,
+        gc_bin %>% as.character %>% as.numeric * 100 %>% round
+      )) %>%
+      mutate(facet_label = factor(facet_label, levels = unique(facet_label))) %>%
+      ggplot(aes(
+        x = coverage_int,
+      )) +
+      geom_histogram(aes(
+        fill = methylation_status
+      ), alpha=0.5) +
+      geom_line(aes(
+        x = x,
+        y = value,
+        group = fit,
+        color = fit
+      ), data = bin_methylation_fit_plot_data_reshaped) +
+      facet_wrap(~ facet_label, scales = 'free') +
+      labs(
+        x = 'Coverage',
+        y = 'Number of bins',
+        color = 'Model fit',
+        fill = 'Classification'
+      )
+  )
+}
+
+plot_bin_methylation_fit_linear <- function(bin_methylation_data, nbfit) {
+  bin_methylation_fit_plot_data_raw <- bin_methylation_data %>%
+    group_by(cpg_bin, gc_bin) %>%
+    summarise(count = n()) %>%
+    ungroup() %>%
+    expand_grid(tibble(x = 1:50)) %>%
+    mutate(
+      gc_content = gc_bin %>% as.character %>% as.numeric,
+      cpg_count = cpg_bin %>% as.character %>% as.integer
+    )
+  
+  bin_methylation_fit_plot_data <- bin_methylation_fit_plot_data_raw %>%
+    mutate(
+      unmethylated_mu = exp(predict(zero_mu_fit, newdata=.)),
+    unmethylated_theta = exp(predict(zero_theta_fit, newdata=.)),
+      unmethylated_fit = dnbinom(x, mu = unmethylated_mu, size = unmethylated_theta) * count,
+      methylated_mu = ifelse(cpg_count == 0, NA, predict(nbfit, newdata = . )),
+      methylated_theta = nbfit$theta,
+      methylated_fit = dnbinom(x, mu = methylated_mu, size =  methylated_theta) * count
+    ) %>%
+    filter(!is.nan(methylated_fit))
+    
+  bin_methylation_fit_plot_data_reshaped <- bin_methylation_fit_plot_data %>%
+    dplyr::select(cpg_bin, gc_bin, x, methylated_fit, unmethylated_fit) %>%
+    gather(fit, value, -cpg_bin, -gc_bin, -x) %>%
+    arrange(cpg_bin, gc_bin) %>%
+    mutate(facet_label = sprintf(
+        '%s CpGs, GC: %s%%',
+        cpg_bin %>% as.character,
+        gc_bin %>% as.character %>% as.numeric * 100 %>% round
+      )) %>%
+    mutate(facet_label = factor(facet_label, levels = unique(facet_label)))
+  
+  return(
+    bin_methylation_data %>%
+      arrange(cpg_bin, gc_bin) %>%
+      mutate(facet_label = sprintf(
+        '%s CpGs, GC: %s%%',
+        cpg_bin %>% as.character,
+        gc_bin %>% as.character %>% as.numeric * 100 %>% round
+      )) %>%
+      mutate(facet_label = factor(facet_label, levels = unique(facet_label))) %>%
+      ggplot(aes(
+        x = coverage_int,
+      )) +
+      geom_histogram(aes(
+        fill = methylation_status
+      ), alpha=0.5) +
+      geom_line(aes(
+        x = x,
+        y = value,
+        group = fit,
+        color = fit
+      ), data = bin_methylation_fit_plot_data_reshaped) +
+      facet_wrap(~ facet_label, scales = 'free') +
+      labs(
+        x = 'Coverage',
+        y = 'Number of bins',
+        color = 'Model fit',
+        fill = 'Classification'
+      )
+  )
+}
+```
 
 ```{r human_results}
 chr <- read_tsv('~/../Downloads/by_chromosome/bin_stats_human_chr3.tsv', comment = '#') %>%
@@ -36,6 +230,10 @@ chr <- read_tsv('~/../Downloads/by_chromosome/bin_stats_human_chr3.tsv', comment
   filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0)
 
 arab1 <- read_tsv('~/../Downloads/by_chromosome/bin_stats_arabidopsis_Arabidopsis1.tsv', comment = '#') %>%
+  mutate(coverage_int = mean_coverage %>% round %>% as.integer) %>%
+  filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0)
+
+arab3 <- read_tsv('~/../Downloads/by_chromosome/bin_stats_arabidopsis_Arabidopsis1.tsv', comment = '#') %>%
   mutate(coverage_int = mean_coverage %>% round %>% as.integer) %>%
   filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0)
 
@@ -74,7 +272,9 @@ chr_cpg_annotated <- chr %>%
     cpg_bin = factor(round(round(cpg_count * 20 / max(cpg_count)) * max(cpg_count) / 20)),
     gc_bin = factor(round(gc_content * 4, 1) / 4)
   )
+```
 
+```{r heatmap_coverage_by_cpg_gc, fig.height=5, fig.width = 6}
 chr_cpg_annotated %>%
   filter(!is.na(cpg_region)) %>%
   mutate(gc_content = round(gc_content, 2)) %>%
@@ -88,10 +288,15 @@ chr_cpg_annotated %>%
   )) +
   geom_tile() +
   scale_fill_viridis() +
-  facet_wrap(cpg_region ~ .)
+  facet_wrap(cpg_region ~ .) +
+  labs(
+    x = 'GC content',
+    y = 'CpG per 300 bp bin',
+    fill = 'Log mean coverage'
+  )
 ```
 
-```{r modeling_coverge_by_cpg_count, fig.width = 8, fig.height = 5}
+```{r modeling_coverge_by_cpg_count, fig.width = 5, fig.height = 5}
 coverage_by_cpg_count <- chr_cpg_annotated %>%
   group_by(cpg_count) %>%
   summarise(mean_coverage = mean(mean_coverage), count = n())
@@ -111,267 +316,55 @@ fitted_data <- tibble(
     fitted_manual = exp(coverage_by_cpg_count_model$coefficients[[1]]) * cpg_count * exp(coverage_by_cpg_count_model$coefficients[[2]] * cpg_count)
   )
 
-coverage_by_cpg_count %>%
-  ggplot(aes(
-    x = cpg_count,
-    y =  mean_coverage,
-  )) +
-  geom_point(aes(size = count)) +
-  geom_line(aes(
-      x = x, y = y
-    ),
-    data = tibble(x = 1:60) %>% mutate(y = 20* dnorm(x = x, mean = 13.5, sd = 7.5))
-  )
-
-arab1 %>%
-  group_by(cpg_count) %>%
-  summarise(mean_coverage = mean(mean_coverage), count = n()) %>%
-  ggplot(aes(
-    x = cpg_count,
-    y = mean_coverage,
-    size = count
-  )) +
-  geom_point()
-
-arab1 %>%
-  ggplot(aes(
-    x = cpg_count,
-    y = mean_coverage
-  )) +
-  geom_point(alpha=0.1)
-
 chr_cpg_annotated %>%
   ggplot(aes(
     x = cpg_count,
     y = mean_coverage
   )) +
   geom_point(alpha=0.1) +
-  ylim(0, 50)
+  ylim(0, 50) +
+  xlim(0, 50) +
+  labs(
+    x = 'CpG count per 300 bp bin',
+    y = 'Coverage of 300 bp bin'
+  )
 
-lm_methylated <- chr_cpg_annotated %>%
-  filter(mean_coverage > 5, mean_coverage < 50) %>%
-  lm(mean_coverage ~ cpg_count, data = .) %>%
-  summary
-
-chr_cpg_annotated %>%
-  filter(row_number() %% 10 == 0) %>%
-  ggplot(aes(
-    x = cpg_count,
-    y = mean_coverage
-  )) +
-  geom_point(alpha = 0.2) +
-  geom_abline(intercept = lm_methylated$coefficients[[1]], slope = lm_methylated$coefficients[[2]])
 ```
 
-```{r, fig.width = 15, fig.height = 15}
-chr_cpg_annotated %>%
+```{r medestrand_data}
+medestrand_data <- tibble(abs_methylation = read_lines('~/../Downloads/medestrand.binmethyl.txt') %>% as.numeric)
+
+medestrand_data %>%
   ggplot(aes(
-    x = mean_coverage / cpg_count
+    x = abs_methylation
   )) +
-  facet_wrap(~ cpg_count, scales = 'free') +
-  xlim(0, 2) +
   geom_histogram()
 ```
 
-```{r, fig.width = 25, fig.height = 20}
-chr_cpg_annotated_for_mix <- chr_cpg_annotated %>%
-  group_by(cpg_bin, gc_bin) %>%
-  filter(n() > 200) %>%
-  ungroup()
-
-chr_cpg_annotated_mix_results <- chr_cpg_annotated_for_mix %>%
-  plyr::ddply(c('cpg_bin', 'gc_bin'), function(z) {
-    message(sprintf('Running for gc_bin = %s and cpg_bin = %s', unique(z$gc_bin), unique(z$cpg_bin)))
-    tryCatch(
-      {
-        model <- flexmix(coverage_int ~ 1, data = z, k = 2, model = FLXMRnegbin())
-        message('refitting')
-        methylated_component = if_else(parameters(model, component=1)[[1]] > parameters(model, component=2)[[1]], 1, 2)
-        unmethylated_component = if_else(methylated_component == 1, 2, 1)
-        return(tibble(
-          methylated_intercept = parameters(model, component=methylated_component)[[1]],
-          unmethylated_intercept = parameters(model, component=unmethylated_component)[[1]],
-          methylated_theta = parameters(model, component=methylated_component)[[2]],
-          unmethylated_theta = parameters(model, component=unmethylated_component)[[2]],
-          methylated_prior = prior(model)[[methylated_component]],
-          unmethylated_prior = prior(model)[[unmethylated_component]],
-          log_likelihood = logLik(model) %>% as.numeric
-        ))
-      },
-      error = function(e) {
-        message('Error occurred. Trying single-component model.')
-        tryCatch({
-          dip_test <- z %>% .$mean_coverage %>% dip.test() %>% .$p.value
-          
-          if (dip_test < 0.05) {
-            message('Multimodal distribution. Reporting methylated values.')
-            # multimodal
-            model <- flexmix(
-              coverage_int ~ 1,
-              data = z %>% filter(mean_coverage > mean(mean_coverage) / 5),
-              k = 1,
-              model = FLXMRnegbin()
-            )
-            return(tibble(
-              methylated_intercept = parameters(model, component=1)[[1]],
-              unmethylated_intercept = NA,
-              methylated_theta = parameters(model, component=1)[[2]],
-              unmethylated_theta = NA,
-              methylated_prior = prior(model)[[1]],
-              unmethylated_prior = NA,
-              log_likelihood = logLik(model) %>% as.numeric
-            ))
-          } else {
-            message('Unimodal distribution. Reporting unmethylated values.')
-            model <- flexmix(
-              coverage_int ~ 1,
-              data = z,
-              k = 1,
-              model = FLXMRnegbin()
-            )
-            return(tibble(
-              methylated_intercept = NA,
-              unmethylated_intercept = parameters(model, component=1)[[1]],
-              methylated_theta = NA,
-              unmethylated_theta = parameters(model, component=1)[[2]],
-              methylated_prior = NA,
-              unmethylated_prior = prior(model)[[1]],
-              log_likelihood = logLik(model) %>% as.numeric
-            ))
-          }
-        },
-        error = function(e) {
-          message('ERROR. Skipping row.')
-        })
-      }
-    )
-  })
-
-chr_cpg_annotated_for_mix %>%
-  group_by(gc_bin, cpg_bin) %>%
-  summarise(
-    lower_limit = min(mean_coverage),
-    upper_limit = max(mean_coverage),
-    count = n()
+```{r example_histograms_by_cpg, fig.width = 4, fig.height = 6}
+chosen_cpg_count <- c(5, 12, 20)
+chr_cpg_annotated %>%
+  filter(
+    cpg_count %in% chosen_cpg_count,
   ) %>%
-  ungroup() %>%
-  plyr::ddply(c('gc_bin', 'cpg_bin'), function(z) {
-    x = z$lower_limit : z$upper_limit
-    return(tibble(
-      gc_bin = rep(z$gc_bin, length(x)),
-      cpg_bin = rep(z$cpg_bin, length(x)),
-      count = rep(z$count, length(x)),
-      x = x))
-  }) %>%
-  right_join(chr_cpg_annotated_mix_results, by = c('gc_bin', 'cpg_bin')) %>%
   mutate(
-    methylated_y = dnbinom(x, size = methylated_theta, mu = exp(methylated_intercept)),
-    unmethylated_y = dnbinom(x, size = unmethylated_theta, mu = exp(unmethylated_intercept))
-  ) %>%
-  dplyr::select(gc_bin, cpg_bin, x, methylated_y, unmethylated_y, count) %>%
-  gather(type, value, -gc_bin, -cpg_bin, -x, -count) %>%
-  mutate(scaled_value = value * count) %>%
+    cpg_label = factor(
+      sprintf('%s CpGs', cpg_count),
+      levels = sprintf('%s CpGs', chosen_cpg_count)
+    )) %>%
   ggplot(aes(
-    x = x
+    x = mean_coverage
   )) +
-  geom_histogram(aes(
-    x = coverage_int
-  ), data = chr_cpg_annotated_for_mix %>%
-    filter(
-      gc_bin %in% chr_cpg_annotated_mix_results$gc_bin,
-      cpg_bin %in% chr_cpg_annotated_mix_results$cpg_bin
-    )
-  ) +
-  geom_point(aes(
-    y = scaled_value,
-    color = type
-  )) +
-  geom_line(aes(
-    y = scaled_value,
-    color = type
-  )) +
-  geom_vline(aes(
-    xintercept = median_coverage
-  ), data = chr_cpg_annotated_for_mix %>% group_by(gc_bin, cpg_bin) %>% summarise(median_coverage = median(coverage_int))) +
-  facet_wrap(~ cpg_bin + gc_bin, scales='free')
-
-chr_cpg_annotated_for_mix %>%
-  filter(cpg_bin == 16, gc_bin == 0.46) %>%
-  .$coverage_int %>% dip.test(x = .)
-```
-
-```{r analysis_of_fits}
-chr_cpg_annotated_mix_results %>%
-  mutate(
-    mu = exp(methylated_intercept)
-  ) %>%
-  ggplot(aes(
-    x = cpg_bin,
-    y = mu,
-    group = gc_bin,
-    color = gc_bin
-  )) +
-  geom_point() +
-  geom_line() +
-  scale_fill_viridis()
-
-chr_cpg_annotated_mix_results %>%
-  filter(!is.infinite(methylated_theta)) %>%
-  ggplot(aes(
-    x = cpg_bin,
-    y = methylated_theta,
-    group = gc_bin,
-    color = gc_bin
-  )) +
-  geom_line() +
-  geom_point()
-
-mu_cpg_gc <- chr_cpg_annotated_mix_results %>%
-  filter(!is.na(methylated_intercept)) %>%
-  mutate(
-    mu = exp(methylated_intercept),
-    cpg_count = as.integer(cpg_bin),
-    gc_content = gc_bin %>% as.character %>% as.numeric,
+  xlim(0, 50) +
+  facet_grid(cpg_label ~ ., scales = 'free') +
+  geom_histogram(bins = 50) +
+  labs(
+    x = 'Bin coverage',
+    y = 'Count'
   )
-
-mu_cpg_gc_glm <- mu_cpg_gc %>%
-  glm(mu ~ cpg_count + gc_content, data = .)
-
-mu_cpg_gc_glm$coefficients
-
-mu_cpg_gc %>%
-  mutate(
-    mu_gc_corrected = mu + (mu_cpg_gc_glm$coefficients[['gc_content']] * (mean(gc_content) - gc_content))
-  ) %>%
-  ggplot(aes(
-    x = gc_bin,
-    y = mu_gc_corrected,
-    color = cpg_bin,
-    group = cpg_bin
-  )) +
-  geom_line()
 ```
 
-```{r determining_the_zero_profile}
-chr_cpg_annotated_mix_results %>%
-  filter(cpg_bin == 0) %>%
-  mutate(
-    mu = exp(unmethylated_intercept),
-    theta = unmethylated_theta
-  ) %>%
-  dplyr::select(gc_bin, cpg_bin, mu, theta) %>%
-  gather(coefficient, value, -gc_bin, -cpg_bin) %>%
-  filter(!is.infinite(value)) %>%
-  ggplot(aes(
-    x = gc_bin,
-    y = value,
-    group = coefficient,
-    color = coefficient
-  )) +
-  geom_point() +
-  geom_line() +
-  scale_fill_viridis()
-
+```{r zero_profile_parameter_fit, fig.height = 3, fig.width = 5}
 zero_profile_gc_model_output <- chr_cpg_annotated %>%
   filter(cpg_count == 0) %>%
   mutate(
@@ -406,19 +399,15 @@ zero_profile_gc_model_output <- chr_cpg_annotated %>%
   }) %>%
   mutate(mu = exp(log_mu))
 
-mu_fit <- nls(
-  mu ~ a / (1 + exp(-b * (gc_bin - c))), start=list(a=1,b=10,c=0.6),
-  data = zero_profile_gc_model_output %>% mutate(gc_bin = gc_bin %>% as.character %>% as.numeric),
-  control = nls.control(warnOnly = TRUE, maxiter=1000)
+zero_mu_fit <- lm(
+  log(mu) ~ log(gc_content),
+  data = zero_profile_gc_model_output %>% mutate(gc_content = gc_bin %>% as.character %>% as.numeric) %>% filter(mu > 0)
 )
-mu_fit_coef = summary(mu_fit)$coef[, 1]
 
-theta_fit <- nls(
-  theta ~ a / (1 + exp(-b * (gc_bin - c))), start=list(a=1,b=10,c=0.6),
-  data = zero_profile_gc_model_output %>% mutate(gc_bin = gc_bin %>% as.character %>% as.numeric) %>% filter(!is.infinite(theta)),
-  control = nls.control(warnOnly = TRUE, maxiter=1000)
+zero_theta_fit <- lm(
+  log(theta) ~ log(gc_content),
+  data = zero_profile_gc_model_output %>% mutate(gc_content = gc_bin %>% as.character %>% as.numeric) %>% filter(!is.infinite(theta))
 )
-theta_fit_coef = summary(theta_fit)$coef[, 1]
 
 zero_profile_gc_model_output %>%
   mutate(gc_bin = as.numeric(as.character(gc_bin))) %>%
@@ -444,18 +433,27 @@ zero_profile_gc_model_output %>%
         gc_content = seq(0, 1, 0.01)
       ) %>%
       mutate(
-        modeled_mu = mu_fit_coef[['a']] / (1 + exp(- mu_fit_coef[['b']] * (gc_content - mu_fit_coef[['c']]))),
-        modeled_theta = theta_fit_coef[['a']] / (1 + exp(- theta_fit_coef[['b']] * (gc_content - theta_fit_coef[['c']])))
+        mu = exp(predict(zero_mu_fit, newdata = .)),
+        theta = exp(predict(zero_theta_fit, newdata = .))
       ) %>%
       gather(metric, value, -gc_content)
+  ) +
+  scale_color_brewer(palette='Set1') +
+  labs(
+    x = 'GC Content',
+    y = 'Parameter Value',
+    size = 'Number of bins',
+    color = 'Fit parameter'
   )
+```
 
+```{r zero_profile_simulated_data, fig.width = 6.5, fig.height = 4.5}
 tibble(
   gc_content = seq(0, 0.8, 0.1)
 ) %>%
   mutate(
-    mu = mu_fit_coef[['a']] / (1 + exp(- mu_fit_coef[['b']] * (gc_content - mu_fit_coef[['c']]))),
-    theta = theta_fit_coef[['a']] / (1 + exp(- theta_fit_coef[['b']] * (gc_content - theta_fit_coef[['c']])))
+    mu = exp(predict(zero_mu_fit, newdata = .)),
+    theta = exp(predict(zero_theta_fit, newdata = .))
   ) %>%
   plyr::ddply('gc_content', function(z) {
     tibble(x = 0:10) %>%
@@ -467,15 +465,19 @@ tibble(
   )) +
   facet_wrap(~ gc_content) +
   geom_bar(stat = 'identity') +
-  ggtitle('Modeled non-specific binding by GC content (for CpG count = 0)')
+  ggtitle('Modeled non-specific binding by GC content (for CpG count = 0)') +
+  labs(
+    x = 'Coverage by bin',
+    y = 'Relative frequency'
+  )
 ```
 
 ```{r filter_out_zeros_method, fig.width = 30, fig.height=30}
 # Create an initial estimate
 bin_methylation <- chr_cpg_annotated %>%
   mutate(
-    unmethylated_mu = mu_fit_coef[['a']] / (1 + exp(- mu_fit_coef[['b']] * (gc_content - mu_fit_coef[['c']]))),
-    unmethylated_theta = theta_fit_coef[['a']] / (1 + exp(- theta_fit_coef[['b']] * (gc_content - theta_fit_coef[['c']]))),
+    unmethylated_mu = exp(predict(zero_mu_fit, newdata=.)),
+    unmethylated_theta = exp(predict(zero_theta_fit, newdata=.)),
     unmethylated_likelihood = dnbinom(coverage_int, mu = unmethylated_mu, size = unmethylated_theta),
     methylated_mu = ifelse(cpg_count == 0, NA, cpg_count),
     methylated_theta = ifelse(cpg_count == 0, NA, 0.5 * cpg_count),
@@ -502,8 +504,8 @@ for (i in 1:MAX_ITER) {
   # Refit the points based on the regression
   refitted <- chr_cpg_annotated %>%
     mutate(
-      unmethylated_mu = mu_fit_coef[['a']] / (1 + exp(- mu_fit_coef[['b']] * (gc_content - mu_fit_coef[['c']]))),
-      unmethylated_theta = theta_fit_coef[['a']] / (1 + exp(- theta_fit_coef[['b']] * (gc_content - theta_fit_coef[['c']]))),
+      unmethylated_mu = exp(predict(zero_mu_fit, newdata=.)),
+    unmethylated_theta = exp(predict(zero_theta_fit, newdata=.)),
       unmethylated_likelihood = dnbinom(coverage_int, mu = unmethylated_mu, size = unmethylated_theta),
       methylated_mu = ifelse(cpg_count == 0, NA, exp(predict(methylated_bins_nbfit, newdata = .))),
       methylated_theta = methylated_bins_nbfit$theta,
@@ -530,8 +532,8 @@ for (i in 1:MAX_ITER) {
   if (i > 1) {
     percent_changes = abs((methylated_fits[[i]]$coefficients - methylated_fits[[i-1]]$coefficients) / methylated_fits[[i-1]]$coefficients) * 100
     message('Percent Changes:')
-    message(sprintf('%s  %s  %s\n', names(percent_changes), signif(percent_changes, 3), ifelse(percent_changes < 1, 'converged', '--')))
-    if (all(percent_changes < 1)) {
+    message(sprintf('%s  %s  %s\n', names(percent_changes), signif(percent_changes, 3), ifelse(percent_changes < 0.1, 'converged', '--')))
+    if (all(percent_changes < 0.1)) {
       message('All coefficients converged.')
       methylated_fit <- methylated_bins_nbfit
       break
@@ -543,7 +545,59 @@ for (i in 1:MAX_ITER) {
 
 ```
 
-```{r analysis_of_fits}
+```{r posterior_profiles, fig.width = 10, fig.height = 6}
+bin_methylation %>%
+  arrange(cpg_bin) %>%
+  mutate(cpg_label = factor(sprintf('%s CpGs', cpg_bin), levels = unique(sprintf('%s CpGs', cpg_bin)))) %>%
+  ggplot(aes(
+    x = methylated_posterior,
+    fill = methylation_status
+  )) +
+  geom_histogram() +
+  facet_wrap(~ cpg_label, scales='free_y') +
+  labs(
+    x = 'Posterior Probability of Methylation',
+    y = 'Count',
+    color = 'Methylation Status'
+  )
+```
+
+```{r posterior_methylated_fraction, fig.width = 8, fig.height = 5}
+bin_methylation %>%
+  group_by(cpg_count) %>%
+  summarise(
+    methylated = sum(methylation_status == 'methylated'),
+    unmethylated = sum(methylation_status == 'unmethylated')
+  ) %>%
+  ungroup() %>%
+  gather(methylation_status, count, -cpg_count) %>%
+  group_by(cpg_count) %>%
+  mutate(
+    methylation_status = factor(methylation_status, levels = c('unmethylated', 'methylated')),
+    fraction = count / sum(count),
+    count = as.double(count)
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(
+    x = cpg_count,
+    y = fraction,
+    color = methylation_status,
+    group = methylation_status
+  )) +
+  geom_point(aes(
+    size = count
+  )) +
+  geom_line() +
+  scale_size_continuous(trans='log2') +
+  labs(
+    x = 'CpG Count',
+    y = 'Fraction of bins',
+    color = 'Methylation Status',
+    size = 'Number of bins'
+  )
+```
+
+```{r parameter_convergence_plots}
 plyr::ldply(methylated_fits, function(z) {z$coeff}) %>%
   mutate(iteration = row_number()) %>%
   gather(metric, value, -iteration) %>%
@@ -553,42 +607,32 @@ plyr::ldply(methylated_fits, function(z) {z$coeff}) %>%
   ungroup() %>%
   ggplot(aes(
     x = iteration,
-    y = fractional_change
+    y = value
   )) +
   geom_line() +
   facet_wrap(~metric, scales='free')
 ```
 
-```{r plot_refitted_distributions, fig.height=30, fig.width=30}
-plot_bin_methylation_fit(bin_methylation, methylated_fit)
+```{r fit_distributions, fig.height=12, fig.width=15}
+plot_bin_methylation_fit(
+  bin_methylation %>% 
+    filter(
+      gc_content > 0.3,
+      gc_content < 0.8,
+      cpg_bin %in% c(4, 11, 14, 18)
+    ) %>%
+    group_by(cpg_bin, gc_bin) %>%
+    filter(n() > 200) %>%
+    ungroup(),
+  methylated_fit
+)
 ```
 
-```{r plot_refitted_scatterplot, fig.height = 10, fig.width = 10}
-scatterplot_data <- bin_methylation %>%
- distinct(gc_bin) %>%
- expand_grid(tibble(cpg_count = 1:50)) %>%
- mutate(
-   gc_content = gc_bin %>% as.character %>% as.numeric
- ) %>%
- mutate(
-   predicted_coverage = exp(predict(methylated_fit, newdata=.))
- )
-
-bin_methylation_subset %>%
-  ggplot(aes(
-    x = cpg_count,
-    y = coverage_int
-  )) +
-  geom_point(alpha=0.1, shape=20) +
-  geom_line(aes(
-    x = cpg_count,
-    y = predicted_coverage
-  ), color = 'red', data = scatterplot_data) +
-  facet_wrap(~ gc_bin, scales='free') +
-  ylim(0, 100)
+```{r fit_scatterplo, fig.height = 10, fig.width = 10}
+plot_scatter_bin_methylation(bin_methylation, methylated_fit)
 ```
 
-```{r}
+```{r heatmap_mean_coverage_by_cpg_gc_methylation, fig.height=5, fig.width = 6}
 bin_methylation %>%
   filter(!is.na(cpg_region)) %>%
   mutate(gc_content = round(gc_content, 2)) %>%
@@ -602,212 +646,53 @@ bin_methylation %>%
   )) +
   geom_tile() +
   scale_fill_viridis() +
-  facet_grid(methylation_status ~ cpg_region)
+  facet_grid(methylation_status ~ cpg_region) +
+  labs(
+    x = 'GC content',
+    y = 'CpG per 300 bp bin',
+    fill = 'Log mean coverage'
+  )
+```
 
+```{r coverage_by_cpg_scatterplot_colored_by_methylation_status}
 bin_methylation %>%
-  group_by(cpg_count, methylation_status) %>%
-  summarise(
-    mean_coverage = mean(mean_coverage),
-    count = n()
-  ) %>%
+  filter(mean_coverage < 75, cpg_count < 60) %>%
   ggplot(aes(
     x = cpg_count,
     y = mean_coverage,
     color = methylation_status
   )) +
-  geom_point(aes(
-    size = count
-  ))
-```
-
-```{r plot_refitted_data_2, fig.width = 30, fig.height = 30}
-plot_bin_methylation_fit <- function(bin_methylation_data, nbfit) {
-  bin_methylation_fit_plot_data_raw <- bin_methylation_data %>%
-    group_by(cpg_bin, gc_bin) %>%
-    summarise(count = n()) %>%
-    ungroup() %>%
-    expand_grid(tibble(x = 1:50)) %>%
-    mutate(
-      gc_content = gc_bin %>% as.character %>% as.numeric,
-      cpg_count = cpg_bin %>% as.character %>% as.integer
-    )
-  
-  bin_methylation_fit_plot_data <- bin_methylation_fit_plot_data_raw %>%
-    mutate(
-      unmethylated_mu = mu_fit_coef[['a']] / (1 + exp(- mu_fit_coef[['b']] * (gc_content - mu_fit_coef[['c']]))),
-      unmethylated_theta = theta_fit_coef[['a']] / (1 + exp(- theta_fit_coef[['b']] * (gc_content - theta_fit_coef[['c']]))),
-      unmethylated_fit = dnbinom(x, mu = unmethylated_mu, size = unmethylated_theta) * count,
-      methylated_mu = ifelse(cpg_count == 0, NA, exp(predict(nbfit, newdata = . ))),
-      methylated_theta = nbfit$theta,
-      methylated_fit = dnbinom(x, mu = methylated_mu, size =  methylated_theta) * count
-    ) %>%
-    filter(!is.nan(methylated_fit))
-    
-  bin_methylation_fit_plot_data_reshaped <- bin_methylation_fit_plot_data %>%
-    dplyr::select(cpg_bin, gc_bin, x, methylated_fit, unmethylated_fit) %>%
-    gather(fit, value, -cpg_bin, -gc_bin, -x)
-  
-  return(
-    bin_methylation_data %>%
-      ggplot(aes(
-        x = coverage_int,
-      )) +
-      geom_histogram(aes(
-        fill = methylation_status
-      )) +
-      geom_line(aes(
-        x = x,
-        y = value,
-        group = fit,
-        color = fit
-      ), data = bin_methylation_fit_plot_data_reshaped) +
-      geom_vline(aes(
-        xintercept = methylated_mu
-      ), data = bin_methylation_fit_plot_data %>% distinct(cpg_bin, gc_bin, methylated_mu)) +
-      facet_wrap(~ cpg_bin + gc_bin, scales = 'free')
+  geom_point(shape = 20, alpha=0.1) +
+  labs(
+    x = 'CpG count per 300 bp bin',
+    y = 'Coverage per 300 bp bin',
+    color = 'Methylation status'
   )
-}
-
-
 ```
+# Downsampled data
 
-```{r fit_test_case}
-test_cpg_count <- 20
-test_gc_content <- 0.6
+```{r}
+pipeline_output_downsampled <- read_tsv('../data/manual/CMP-01-08-cfDNA-1_downsampled_1000.tsv')
 
-test_nb_curve <- tibble(
-  x = 1:100
-) %>%
-  mutate(
-    y = dnbinom(
-      x = x,
-      size = methylated_bins_nbfit$theta,
-      mu = exp(methylated_bins_nbfit$coefficients[['(Intercept)']] + methylated_bins_nbfit$coefficients[['cpg_count']] * test_cpg_count + methylated_bins_nbfit$coefficients[['gc_content']] * test_gc_content + methylated_bins_nbfit$coefficients[['cpg_count:gc_content']] * test_cpg_count * test_gc_content)
-    )
-  )
-
-test_bins <- chr_cpg_annotated %>%
-  filter(gc_content > test_gc_content - 0.05, gc_content < test_gc_content + 0.05, cpg_count > test_cpg_count - 2, cpg_count < test_cpg_count + 2)
-
-test_bins %>%
-  ggplot(aes(
-    x = coverage_int
-  )) +
-  geom_histogram() +
-  geom_line(aes(
-    x = x,
-    y = y
-    ), data = test_nb_curve %>% mutate(y = y * nrow(test_bins))
-  )
-
-```
-
-```{r relationship_between_cpg_and_theta}
- chr_cpg_annotated_for_mix %>%
-  group_by(
-    cpg_bin,
-    gc_bin
-  ) %>%
+pipeline_output_downsampled %>%
+  filter(coverage < 75, cpg_count < 60) %>%
+  group_by(cpg_count, coverage) %>%
   summarise(
-    count = n(),
-    mean_coverage = mean(mean_coverage)
-  ) %>%
-  inner_join(chr_cpg_annotated_mix_results, by = c('cpg_bin', 'gc_bin')) %>%
-  filter(!is.na(methylated_intercept)) %>%
-  group_by(cpg_bin) %>%
-  summarise(
-    mean_coverage = weighted.mean(mean_coverage, count),
-    mu = weighted.mean(exp(methylated_intercept), count)
-  ) %>%
-  gather(metric, value, -cpg_bin) %>%
-  ggplot(aes(
-    x = cpg_bin,
-    y = value,
-    color = metric,
-    group = metric
-  )) +
-  geom_line()
-
-
-```
-
-```{r stan_optimization, fig.height = 20, fig.width = 20}
-stan_optimization_fit <- readRDS('~/../Downloads/bin_stats_fit_LBFGS.Rds')
-stan_input <- readRDS('~/../Downloads/stan_input.Rds')
-sc <- stan_optimization_fit$par
-
-tibble(
-  coverage = stan_input$coverage,
-  cpg_count = stan_input$cpg_count,
-  gc_content = stan_input$gc_content
-) %>%
-  mutate(
-    cpg_bin = factor(round(round(cpg_count * 20 / max(cpg_count)) * max(cpg_count) / 20)),
-    gc_bin = factor(round(gc_content * 4, 1) / 4)
-  ) %>%
-  group_by(cpg_bin, gc_bin) %>%
-  filter(n() > 1000) %>%
-  ungroup() %>%
-  ggplot(aes(
-    x = coverage
-  )) +
-  facet_wrap(~ cpg_bin + gc_bin) +
-  geom_histogram()
-
-expand_grid(
-  cpg_count = seq(0, 30, 3),
-  gc_content = seq(0, 1, 0.1),
-  x = seq(1, 100)
-) %>%
-  mutate(
-    methylated_mu = sc[['intercept']] + (sc[['cpg_max']] / (1 + exp(-1 * sc[['cpg_growth']] * (cpg_count - sc[['cpg_mean']])))) + sc[['gc_coef']] * gc_content,
-    methylated_phi = exp(sc[['methylated_phi_intercept']] + sc[['methylated_phi_cpg']] * cpg_count + sc[['methylated_phi_gc']] * gc_content),
-    unmethylated_mu = stan_input$ns_mu_a / (1 + exp(-1 * stan_input$ns_mu_b * (gc_content * stan_input$ns_mu_c))),
-    unmethylated_phi = stan_input$ns_theta_a / (1 + exp(- stan_input$ns_theta_b * (gc_content - stan_input$ns_theta_c))),
-    methylated = sc[['theta']] * dnbinom(x = x, mu = methylated_mu, size = methylated_phi),
-    unmethylated = (1-sc[['theta']]) * dnbinom(x = x, mu = unmethylated_mu, size = unmethylated_phi)
-  ) %>%
-  dplyr::select(x, cpg_count, gc_content, methylated, unmethylated) %>%
-  gather(cluster, value, -x, -cpg_count, -gc_content) %>%
-  ggplot(aes(
-    x = x,
-    y = value,
-    color = cluster,
-    group = cluster
-  )) +
-  geom_line() +
-  facet_wrap(~ cpg_count + gc_content, scales = 'free')
-
-expand_grid(
-  cpg_count = seq(0, 50, 1),
-  gc_content = seq(0, 1, 0.1)
-) %>%
-  mutate(
-    methylated_mu = sc[['intercept']] + (sc[['cpg_max']] / (1 + exp(-1 * sc[['cpg_growth']] * (cpg_count - sc[['cpg_mean']])))) + sc[['gc_coef']] * gc_content,
-    methylated_phi = exp(sc[['methylated_phi_intercept']] + sc[['methylated_phi_cpg']] * cpg_count + sc[['methylated_phi_gc']] * gc_content),
-    unmethylated_mu = stan_input$ns_mu_a / (1 + exp(-1 * stan_input$ns_mu_b * (gc_content * stan_input$ns_mu_c))),
-    unmethylated_phi = stan_input$ns_theta_a / (1 + exp(- stan_input$ns_theta_b * (gc_content - stan_input$ns_theta_c)))
+    methylated_fraction = sum(methylation_status == 'methylated') / n(),
+    count = n()
   ) %>%
   ggplot(aes(
-    x = gc_content,
-    y = methylated_mu,
-    color = cpg_count,
-    group = cpg_count
+    x = cpg_count,
+    y = coverage,
+    fill = methylated_fraction,
+    alpha = count
   )) +
-  geom_line()
-```
-
-
-```{r gamma}
-tibble(
-  x = 1:50
-) %>%
-  mutate(
-    y = dgamma(x = x, shape = 1, scale = 1)
-  ) %>%
-  ggplot(aes(
-    x = x,
-    y = y
-  )) +
-  geom_line()
+  geom_tile() +
+  labs(
+    x = 'CpG count per 300 bp bin',
+    y = 'Coverage per 300 bp bin',
+    fill = 'Methylation status',
+    alpha = 'Number of bins'
+  ) +
+  scale_alpha_continuous(trans='log2')
 ```
