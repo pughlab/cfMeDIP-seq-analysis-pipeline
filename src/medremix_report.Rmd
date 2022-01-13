@@ -1,0 +1,270 @@
+---
+title: "MedRemix Report"
+author: "Eric Zhao"
+date: "4/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(cowplot)
+library(ggthemr)
+source('R/medremix_visualizations.R')
+ggthemr('fresh')
+
+options(dplyr.summarise.inform = FALSE)
+
+```
+
+# Introduction
+
+MedRemix is a tool for methylation detection. It was designed using cfMeDIP-seq data, and has not been tested on tissue MeDIP-seq data. This R markdown report runs a number of key tests and visualizations which may be useful for quality checks, ensuring a sensible model fit, and understanding the outputs of the tool.
+
+We begin by loading the data.
+
+```{r load_data}
+medremix_output <- read_tsv('../data/manual/CMP-01-08-cfDNA-1_downsampled_1000.tsv') %>%
+  mutate(
+    cpg_bin = factor(round(round(cpg_count * 20 / max(cpg_count)) * max(cpg_count) / 20)),
+    gc_bin = factor(round(gc_content * 4, 1) / 4)
+  )
+medremix_model <- readRDS('../data/manual/CMP-01-08-cfDNA-1_model.Rds')
+```
+
+The data (`medremix_output`) contain `r nrow(medremix_output)` bins included from `r medremix_output$bin_chr %>% unique %>% length` distinct chromosomes. We can preview the contents of the columns.
+
+`medremix_model` contains the model fits that MedRemix converged upon, as well as intermediate steps, and the model describing the profile for zero-CpG bins.
+
+```{r glimpse_data}
+glimpse(medremix_output)
+```
+
+Plots showing the breakdown of inferred methylation status across the range of coverage levels, and shows how the coverage correlates with CpG count. For comparison, the same plot is shown without methylation status coloured.
+
+```{r heatmap_methylation_by_coverage_cpg, width = 5, height = 4}
+heatmap_methylation_by_coverage_data <- 
+  medremix_output %>%
+  filter(coverage < 75, cpg_count < 60) %>%
+  group_by(cpg_count, coverage) %>%
+  summarise(
+    methylated_fraction = sum(methylation_status == 'methylated') / n(),
+    count = n()
+  )
+
+heatmap_methylation_by_coverage_data %>%
+  ggplot(aes(
+    x = cpg_count,
+    y = coverage,
+    fill = methylated_fraction,
+    alpha = count
+  )) +
+  geom_tile() +
+  labs(
+    x = 'CpG count per 300 bp bin',
+    y = 'Coverage per 300 bp bin',
+    fill = 'Methylation status',
+    alpha = 'Number of bins'
+  ) +
+  scale_alpha_continuous(trans='log2')
+
+heatmap_methylation_by_coverage_data %>%
+  ggplot(aes(
+    x = cpg_count,
+    y = coverage,
+    alpha = count
+  )) +
+  geom_tile() +
+  labs(
+    x = 'CpG count per 300 bp bin',
+    y = 'Coverage per 300 bp bin',
+    alpha = 'Number of bins'
+  ) +
+  scale_alpha_continuous(trans='log2')
+```
+
+We begin by ensuring that our coefficients have adequately converged.
+
+```{r coefficient_convergence_plot, fig.height = 4, fig.width = 7}
+plyr::ldply(medremix_model$iteration_models, function(z) {c(z$coefficients, theta=z$theta)}) %>%
+  mutate(iteration = row_number()) %>%
+  gather(metric, value, -iteration) %>%
+  arrange(metric, iteration) %>%
+  group_by(metric) %>%
+  mutate(fractional_change = c(NA, abs((value[2:n()] - value[1:(n()-1)]) / value[1:(n() - 1)]))) %>%
+  ungroup() %>%
+  ggplot(aes(
+    x = iteration,
+    y = value
+  )) +
+  geom_line() +
+  facet_wrap(~metric, scales='free') +
+  labs(
+    x = 'Iteration',
+    y = 'Coefficient value'
+  )
+```
+
+A plot showing the distribution of methylation across a wide range of CpG count and GC fraction, with the estimated methylation level overlaid as a visual check for goodness of fit.
+
+```{r fit_scatterplot, fig.height = 10, fig.width = 12}
+plot_scatter_bin_methylation(
+  medremix_output %>% filter(coverage < 100),
+  medremix_model$final_model
+)
+```
+ 
+Show examples of fits. By default, it shows a wide range of CpG counts, and chooses the 8 GC content levels within each CpG count that have the most data points.
+ 
+```{r fit_histograms, fig.height = 15, fig.width = 20}
+cpg_levels = medremix_output$cpg_bin %>% levels
+visualized_levels <- cpg_levels[seq(1, length(cpg_levels), round(length(cpg_levels) / 8)) %>% unique]
+
+graphs_to_show <- medremix_output %>%
+  filter(cpg_bin %in% visualized_levels) %>%
+  count(cpg_bin, gc_bin) %>%
+  arrange(-n) %>%
+  group_by(cpg_bin) %>%
+  filter(row_number() <= 8)
+
+plot_bin_methylation_fit(
+  medremix_output %>%
+    right_join(
+      graphs_to_show,
+      by = c('cpg_bin', 'gc_bin')
+    ),
+  medremix_model
+)
+```
+
+# Fitting the non-specific binding profile
+
+```{r zero_cpg_profile, fig.height = 7, fig.width = 6}
+plot_zero_model_parameters <- medremix_model$zero_model$model_output %>%
+  mutate(gc_bin = as.numeric(as.character(gc_bin))) %>%
+  dplyr::select(-log_mu) %>%
+  dplyr::rename(`Mean (mu)` = mu, `Dispersion (theta)` = theta) %>%
+  gather(parameter, value, -count, -log_likelihood, -gc_bin) %>%
+  filter(!is.infinite(value)) %>%
+  ggplot(aes(
+    x = gc_bin,
+    y = value
+  )) +
+  geom_point(aes(
+    color = parameter,
+    group = parameter,
+    size = count
+  )) +
+  geom_line(aes(
+      x = gc_content,
+      y = value,
+      color = metric,
+      group = metric
+    ),
+    data = tibble(
+        gc_content = seq(0, 1, 0.01)
+      ) %>%
+      mutate(
+        `Mean (mu)` = exp(predict(medremix_model$zero_model$mu_fit, newdata = .)),
+        `Dispersion (theta)` = exp(predict(medremix_model$zero_model$theta_fit, newdata = .))
+      ) %>%
+      gather(metric, value, -gc_content)
+  ) +
+  scale_color_brewer(palette='Set1') +
+  labs(
+    x = 'GC Content',
+    y = 'Parameter Value',
+    size = 'Number of bins',
+    color = 'Fit parameter'
+  ) +
+  ggtitle('Estimation of parameters to fit bins with CpG count = 0')
+
+plot_zero_model_profiles <- tibble(
+  gc_content = seq(0, 0.8, 0.1)
+) %>%
+  mutate(
+    mu = exp(predict(medremix_model$zero_model$mu_fit, newdata = .)),
+    theta = exp(predict(medremix_model$zero_model$theta_fit, newdata = .))
+  ) %>%
+  plyr::ddply('gc_content', function(z) {
+    tibble(x = 0:10) %>%
+      mutate(y = dnbinom(x, z$theta, mu = z$mu))
+  }) %>%
+  ggplot(aes(
+    x = x,
+    y = y
+  )) +
+  facet_wrap(~ gc_content) +
+  geom_bar(stat = 'identity') +
+  ggtitle('Simulated non-specific binding by GC content (CpG count = 0)') +
+  labs(
+    x = 'Coverage by bin',
+    y = 'Relative frequency'
+  )
+
+plot_grid(
+  plot_zero_model_parameters,
+  plot_zero_model_profiles,
+  ncol = 1
+)
+```
+
+# Outputs of the model
+
+
+
+```{r posterior_profiles, fig.width = 10, fig.height = 6}
+medremix_output %>%
+  arrange(cpg_bin) %>%
+  mutate(cpg_label = factor(sprintf('%s CpGs', cpg_bin), levels = unique(sprintf('%s CpGs', cpg_bin)))) %>%
+  ggplot(aes(
+    x = methylated_posterior,
+    fill = methylation_status
+  )) +
+  geom_histogram() +
+  facet_wrap(~ cpg_label, scales='free_y') +
+  labs(
+    x = 'Posterior Probability of Methylation',
+    y = 'Count',
+    color = 'Methylation Status'
+  ) %>%
+  scale_fill_brewer(palette = 'Set1')
+```
+
+
+```{r posterior_methylated_fraction, fig.width = 8, fig.height = 5}
+medremix_output %>%
+  group_by(cpg_count) %>%
+  summarise(
+    methylated = sum(methylation_status == 'methylated'),
+    unmethylated = sum(methylation_status == 'unmethylated')
+  ) %>%
+  ungroup() %>%
+  gather(methylation_status, count, -cpg_count) %>%
+  group_by(cpg_count) %>%
+  mutate(
+    methylation_status = factor(methylation_status, levels = c('unmethylated', 'methylated')),
+    fraction = count / sum(count),
+    count = as.double(count)
+  ) %>%
+  ungroup() %>%
+  ggplot(aes(
+    x = cpg_count,
+    y = fraction,
+    color = methylation_status,
+    group = methylation_status
+  )) +
+  geom_point(aes(
+    size = count
+  )) +
+  geom_line() +
+  scale_size_continuous(trans='log2') +
+  labs(
+    x = 'CpG Count',
+    y = 'Fraction of bins',
+    color = 'Methylation Status',
+    size = 'Number of bins'
+  ) +
+  scale_color_brewer(palette='Set1')
+```
