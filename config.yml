@@ -1,27 +1,101 @@
 paths:
+  # This section defines a few external dependencies which are not bundled into any
+  # pre-existing package manager. You will need to download these dependencies
+  # and point to them here by providing their paths.
+  
   dependencies:
+
+    # ConsensusCruncher: 
+    # Clone https://github.com/pughlab/ConsensusCruncher and locate extract_barcodes.py
+    # within the code. Provide the absolute path to extract_barcodes.py below.
     extract_barcodes_path: src/ConsensusCruncher/ConsensusCruncher/extract_barcodes.py
+
+    # MeDEStrand: 
+    # Clone https://github.com/eyzhao/MeDEStrand. This is a slightly modified version
+    # of MeDEStrand which allows it to be compatible with this pipeline.
+    # Provide the basepath to the cloned repo below. It is dynamically loaded into
+    # R code using devtools::load_all().
     medestrand_path: /cluster/home/zhaoe/git/MeDEStrand
+
 data:
+
+  # Base Path:
+  # This is the directory which will contain all of the pipeline's output.
   base_path: /cluster/projects/cgptip/projects/INSPIRE/analysis/cfMedip/pipeline
+
+  # Excluded Cases:
+  # Any cases listed here will be excluded from analysis. The IDs must correspond
+  # to the sample_name column of the samplesheet.
   excluded_cases:
+  # - example_case_id_1
+  # - example_case_id_2
+
+  # Defaults:
+  # All of these default settings are automatically used unless alternatives are specific
+  # for a given cohort. Alternative settings are specified under the same names under
+  # data > cohorts > [cohortname] > settings. For example, if you wanted to use a different
+  # genome for a cohort named mycohort, you could provide a path to the alternative genome
+  # under data > cohorts > mycohort > settings > genome, and that would override the 
+  # default genome specified below.
   defaults:
+
+    # Genome: path to default genome .fa file.
     genome: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_F19K16_F24B22/hg38_F19K16_F24B22.fa
+
+    # BWA Index: this is the prefix for BWA Index. By adding the file extensions,
+    # you can locate the files. For example,
+    # bwa_index: /path/to/bwa/index implies that the following files exist:
+    # /path/to/bwa/index.amb, /path/to/bwa/index.ann, /path/to/bwa/index.bwt, ...
     bwa_index: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_F19K16_F24B22/BWA_index/hg38_F19K16_F24B22
+
+    # BSgenome: You may provide either package names or paths to BSgenome packages below.
+    # If your data contains a mix of different organisms (e.g. arabidopsis), then you may
+    # provide a different BSgenome for each organism.
     bsgenome:
       human: '/cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/bsgenome/BSgenome.Hsapiens.UCSC.hg38'
       arabidopsis: '/cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/bsgenome/BSgenome.F19K16.F24B22'
+
+    # Chromosomes: List the chromosomes below for each organism used.
     chromosomes:
       human: 'chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22'
       arabidopsis: 'F19K16,F24B22'
+
+    # ConsensusCruncher barcode setting: Use either
+    # --blist BARCODELIST or --bpattern PATTERN below.
     barcodes: '--blist /cluster/projects/pughlab/projects/ezhao/assets/reference/barcodes/barcode_idt.txt'
+
+    # Trim Galore! settings: You may modify the below settings as you
+    # like, which will be provided as parameters to Trim Galore!
     trimgalore: '--clip_R1 10 --clip_R2 10'
-    blacklist: /cluster/home/zhaoe/git/cfMeDIP-seq-analysis-pipeline/data/manual/hg38-blacklist.v2.bed
+
+    # Signatures: These are files containing regions of interest, which will get pulled from
+    # the output data into summary matrices of the results.
     signatures:
       cancer_tcga_vrba_2017: src/external/methylation-signatures-resource/signatures/cancer_tcga_vrba_2017/hg38.tsv
       rfpurify: src/external/methylation-signatures-resource/signatures/cancer_rfpurify/hg38.tsv
       methylcibersort: src/external/methylation-signatures-resource/signatures/methylcibersort/hg38.tsv
       althaf_immune: data/manual/private_signatures/althaf_immune_signature_hg38.tsv
+
+  # Cohorts:
+  # Each cohort is named and contains a samplesheet.
+  # The samplesheet contains four columns:
+  # - sample_name     The unique identifier of the sample.
+  # - library_index   If a sample had multiple libraries sequenced, you can list
+  #                   multiple rows with the same sample_name and incrementing
+  #                   library_index, and the multiple libraries will automatically
+  #                   be merged into a final BAM file.
+  # - read_in_pair    For paired end data, this should be a 1 or 2, one for each
+  #                   read direction.
+  # - path            Path to the FASTQ file.
+  #
+  # For each cohort, you can specify whether it is an active cohort.
+  # Only active cohorts are processed. Labelling a cohort inactive will
+  # cause it to be skipped by the Snakefile.
+  #
+  # Lastly, for each cohort you may specify settings. Under this, you may
+  # provide any non-default settings using the same setting names and
+  # structure as was seen above in data > defaults.
+
   cohorts:
     comparison:
       samplesheet: /cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline/input/cohorts/samplesheet_comparison_cfmedip.csv
