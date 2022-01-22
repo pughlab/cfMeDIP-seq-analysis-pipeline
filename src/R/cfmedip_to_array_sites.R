@@ -20,10 +20,12 @@ if (! interactive()) {
     message('Running in interactive mode. Be sure to specify args manually.')
 }
 
+library(arrow)
 library(tidyverse)
 library(data.table)
 
-cfmedip_data <- fread(args[['cfmedip']])
+cfmedip_data <- read_feather(args[['cfmedip']])
+setDT(cfmedip_data)
 manifest <- fread(args[['manifest']]) %>% filter(!is.na(CpG_beg))
 
 setkey(cfmedip_data, bin_chr, bin_start, bin_end)
@@ -55,4 +57,4 @@ overlaps_out <- unique(overlaps[
       'mean_fragment_length'
     )])
 
-fwrite(overlaps_out, args[['output']])
+write_feather(as.data.frame(overlaps_out), args[['output']])

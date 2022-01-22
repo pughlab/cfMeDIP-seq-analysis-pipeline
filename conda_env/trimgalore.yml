@@ -1,0 +1,5 @@
+name: trimgalore
+channels:
+  - bioconda
+dependencies:
+  - trim-galore

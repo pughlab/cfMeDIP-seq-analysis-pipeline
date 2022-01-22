@@ -1,0 +1,12 @@
+name: qualimap
+channels:
+  - bioconda
+  - biobuilds
+dependencies:
+  - qualimap
+  - r-optparse
+  - bioconductor-repitools
+  - bioconductor-noiseq
+  - bioconductor-rsamtools
+  - bioconductor-genomicfeatures
+  - bioconductor-rtracklayer

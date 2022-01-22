@@ -1,0 +1,8 @@
+name: samtools
+channels:
+  - bioconda
+dependencies:
+  - samtools
+  - bcftools
+  - picard
+  - bwa

@@ -1,0 +1,5 @@
+name: deeptools
+channels:
+  - bioconda
+dependencies:
+  - deeptools

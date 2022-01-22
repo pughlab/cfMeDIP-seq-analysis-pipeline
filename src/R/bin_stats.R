@@ -6,7 +6,11 @@ Usage:
 
 Options:
     -b --bam BAM        Path to input BAM file
-    -g --genome GENOME  Name of BSgenome (usually BSgenome.Hsapiens.UCSC.hg38 or BSgenome.Athaliana.TAIR.TAIR9)
+    -g --genome GENOME  Either the name of BSgenome (usually BSgenome.Hsapiens.UCSC.hg38
+                            or BSgenome.Athaliana.TAIR.TAIR9), or the path to a folder
+                            containing a custom BSgenome as a package, which will be loaded
+                            using devtools::load_all()
+
     -c --chrom CHROM    Chromosome
     -o --output OUTPUT  Output path
 
@@ -24,17 +28,25 @@ if (! interactive()) {
     message('Running in interactive mode. Be sure to specify args manually.')
 }
 
+library(arrow)
 library(GenomicRanges)
 library(BSgenome)
 library(Rsamtools)
 library(tidyverse)
 
 BIN_WIDTH = 300
-FRAGMENT_LENGTH_LIMIT = 2000
+FRAGMENT_LENGTH_LIMIT = 500
 
 bam_file <- BamFile(args[['bam']], asMates=TRUE)
 chrom_length <- bam_file %>% seqinfo %>% seqlengths %>% .[args[['chrom']]]
-bsgenome <- getBSgenome(args[['genome']])
+
+if (file.exists(paste(args[['genome']], 'DESCRIPTION', sep='/'))) {
+    devtools::load_all(args[['genome']])
+    bsgenome <- getBSgenome(basename(args[['genome']]))
+} else {
+    bsgenome <- getBSgenome(args[['genome']])
+}
+
 if (!is.null(args[['bsgchr']])) {
     stopifnot(args[['bsgchr']] %in% seqnames(bsgenome))
     bsgenome_chr = args[['bsgchr']]
@@ -67,12 +79,12 @@ bam_reads_tibble <- tibble(
     strand = bam_reads[[1]]$strand,
     mapq = bam_reads[[1]]$mapq
 ) %>%
-    mutate(end = start + width) %>%
-    filter(mapq >= 20)
+    mutate(end = start + width)
 
 fragments_tibble <- bam_reads_tibble %>%
+    filter(mapq >= 20) %>%
     group_by(seqnames, mateid) %>%
-    filter(n() == 2) %>% 
+    filter(n() == 2, '-' %in% strand, '+' %in% strand) %>% 
     filter(mate_status == 'mated') %>%
     summarise(
         paired_end_reads = sprintf(
@@ -90,10 +102,10 @@ fragments_tibble <- bam_reads_tibble %>%
 
 fragments_tibble_limited <- fragments_tibble %>% filter(width < FRAGMENT_LENGTH_LIMIT, width > 0)
 
-filtered_reads <- bam_reads_tibble %>% filter(! mateid %in% fragments_tibble_limited$mate_id)
+filtered_reads <- bam_reads_tibble %>% filter(! mateid %in% fragments_tibble_limited$mateid)
 
 message(
-    sprintf('Filtered out %s fragments with length <= 0 or length > %s',
+    sprintf('Filtered out %s fragments with insufficient quality, length <= 0, or length > %s',
     nrow(fragments_tibble) - nrow(fragments_tibble_limited),
     FRAGMENT_LENGTH_LIMIT
     )
@@ -125,7 +137,10 @@ bin_coverage <- bind_cols(
             select(seqnames, start, end),
         by = c('bin_chr' = 'seqnames', 'bin_start' = 'start', 'bin_end' = 'end')
     ) %>%
-    replace_na(list(coverage_bp = 0)) %>%
+    replace_na(list(
+        n_fragments = 0,
+        coverage_bp = 0
+    )) %>%
     arrange(bin_chr, bin_start) %>%
     mutate(mean_coverage = coverage_bp / BIN_WIDTH) %>%
     mutate(
@@ -142,12 +157,6 @@ bin_coverage <- bind_cols(
         cpg_count = str_count(seq, 'CG'),
     ) %>%
     select(-known_bps, -seq)
-
-out_args <- args[! startsWith(names(args), '--')]
-write_lines(
-    c('# bin_stats v1.0', sprintf('# %s=%s', names(out_args), unlist(out_args)), '#'),
-    args[['output']]
-)
 
 bin_coverage %>%
     write_tsv(

@@ -4,7 +4,5 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=eric.zhao@rmp.uhn.ca
 
-. env.sh
-
 echo 'Running on H4H cluster'
 snakemake -p --profile slurm

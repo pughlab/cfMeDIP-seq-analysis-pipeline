@@ -1,0 +1,8 @@
+name: biopython
+channels:
+  - conda-forge
+dependencies:
+  - biopython
+  - pandas
+  - numpy
+  - matplotlib

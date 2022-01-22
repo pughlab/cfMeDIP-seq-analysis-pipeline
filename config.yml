@@ -1,20 +1,48 @@
 paths:
   dependencies:
+    extract_barcodes_path: src/ConsensusCruncher/ConsensusCruncher/extract_barcodes.py
     medestrand_path: /cluster/home/zhaoe/git/MeDEStrand
-  bwa: /cluster/home/zhaoe/software/conda/envs/pipeline-cfMeDIP-core/bin/bwa
-  bwa_index: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_arabidopsis_chr_1_3/BWA_index/hg38_arabidopsis
-  samtools: /cluster/home/zhaoe/software/conda/envs/pipeline-cfMeDIP-core/bin/samtools
-  genome: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_arabidopsis_chr_1_3/hg38_arabidopsis_chr_1_3.fa
-  barcodes: /cluster/projects/pughlab/projects/ezhao/assets/reference/barcodes/barcode_idt.txt
-  bsgenome:
-    human: BSgenome.Hsapiens.UCSC.hg38
-    arabidopsis: BSgenome.Athaliana.TAIR.TAIR9
 data:
-  base_path: /cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline
+  base_path: /cluster/projects/cgptip/projects/INSPIRE/analysis/cfMedip/pipeline
+  excluded_cases:
+  defaults:
+    genome: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_F19K16_F24B22/hg38_F19K16_F24B22.fa
+    bwa_index: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_F19K16_F24B22/BWA_index/hg38_F19K16_F24B22
+    bsgenome:
+      human: '/cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/bsgenome/BSgenome.Hsapiens.UCSC.hg38'
+      arabidopsis: '/cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/bsgenome/BSgenome.F19K16.F24B22'
+    chromosomes:
+      human: 'chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22'
+      arabidopsis: 'F19K16,F24B22'
+    barcodes: '--blist /cluster/projects/pughlab/projects/ezhao/assets/reference/barcodes/barcode_idt.txt'
+    trimgalore: '--clip_R1 10 --clip_R2 10'
+    blacklist: /cluster/home/zhaoe/git/cfMeDIP-seq-analysis-pipeline/data/manual/hg38-blacklist.v2.bed
+    signatures:
+      cancer_tcga_vrba_2017: src/external/methylation-signatures-resource/signatures/cancer_tcga_vrba_2017/hg38.tsv
+      rfpurify: src/external/methylation-signatures-resource/signatures/cancer_rfpurify/hg38.tsv
+      methylcibersort: src/external/methylation-signatures-resource/signatures/methylcibersort/hg38.tsv
+      althaf_immune: data/manual/private_signatures/althaf_immune_signature_hg38.tsv
   cohorts:
     comparison:
       samplesheet: /cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline/input/cohorts/samplesheet_comparison_cfmedip.csv
-      active: True
+      active: False
     test:
       samplesheet: /cluster/projects/pughlab/projects/ezhao/pipelines/cfmedipseq_pipeline/input/cohorts/samplesheet_comparison_cfmedip_test.csv
       active: False
+    inspire:
+      samplesheet: data/manual/samplesheets/inspire_samplesheet.csv
+      active: True
+    charmnormal:
+      samplesheet: data/manual/samplesheets/charm_normal.csv
+      active: False
+    kuinormal:
+      samplesheet: data/manual/samplesheets/kuinormal_samplesheet.csv
+      active: False
+      settings:
+        genome: /cluster/tools/data/genomes/human/hg38/iGenomes/Sequence/BWAIndex/genome.fa
+        bwa_index: /cluster/tools/data/genomes/human/hg38/iGenomes/Sequence/BWAIndex/genome.fa
+        bsgenome:
+          human: '/cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/bsgenome/BSgenome.Hsapiens.UCSC.hg38'
+        barcodes: '--bpattern NNT'
+        chromosomes:
+          human: 'chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22'

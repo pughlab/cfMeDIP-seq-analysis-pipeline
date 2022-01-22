@@ -6,7 +6,7 @@ Usage:
 
 Options:
     -i --input INPUT            Path to bin data output by bin_stats.R
-    -o --output OUTPUT          Output path for the table of
+    -o --output OUTPUT          Output path for the table of fit bins (.feather format)
 
     --method METHOD             Default is MCMC. Can specify LBFGS, BFGS, Newton, or VB.
     --modelout MODELOUT         Path into which to dump a .Rds file containing the final
@@ -22,6 +22,7 @@ if (! interactive()) {
   message('Running in interactive mode. Be sure to specify args manually.')
 }
 
+library(arrow)
 library(tidyverse)
 library(MASS)
 library(flexmix)
@@ -32,8 +33,14 @@ PERCENT_CHANGE_THRESHOLD = 0.1
 
 message('- Importing data.')
 
-bins <- read_tsv(args[['input']], comment = '#', col_types='ciiddddddi') %>%
-  mutate(coverage_int = mean_coverage %>% round %>% as.integer) %>%
+bins <- read_feather(args[['input']]) %>%
+  as_tibble %>%
+  mutate(
+    bin_start = as.integer(bin_start),
+    bin_end = as.integer(bin_end),
+    cpg_count = as.integer(cpg_count),
+    coverage_int = mean_coverage %>% round %>% as.integer
+  ) %>%
   filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0) %>%
   mutate(
     cpg_bin = factor(round(round(cpg_count * 20 / max(cpg_count)) * max(cpg_count) / 20)),
@@ -212,18 +219,43 @@ bin_methylation %>%
     methylated_mu,
     mean_fragment_length
   ) %>%
-  write_tsv(args[['output']])
+  write_feather(args[['output']])
 message(sprintf('Output data written to %s', args[['output']]))
+
+stripGlmLR = function(cm) {
+  cm$y = c()
+  cm$model = c()
+  
+  cm$residuals = c()
+  cm$fitted.values = c()
+  cm$effects = c()
+  cm$qr$qr = c()  
+  cm$linear.predictors = c()
+  cm$weights = c()
+  cm$prior.weights = c()
+  cm$data = c()
+
+  
+  cm$family$variance = c()
+  cm$family$dev.resids = c()
+  cm$family$aic = c()
+  cm$family$validmu = c()
+  cm$family$simulate = c()
+  attr(cm$terms,".Environment") = c()
+  attr(cm$formula,".Environment") = c()
+  
+  cm
+}
 
 if (!is.null(args[['modelout']])) {
   message('- Serializing model data to file.')
   model_data <- list(
-    final_model = methylated_fit,
-    iteration_models = methylated_fits,
+    final_model = stripGlmLR(methylated_fit),
+    iteration_models = lapply(methylated_fits, function(z) {stripGlmLR(z)}),
     zero_model = list(
         model_output = zero_profile_gc_model_output,
-        theta_fit = zero_theta_fit,
-        mu_fit = zero_mu_fit
+        theta_fit = stripGlmLR(zero_theta_fit),
+        mu_fit = stripGlmLR(zero_mu_fit)
     )
   )
   saveRDS(model_data, args[['modelout']])

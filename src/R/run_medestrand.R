@@ -2,12 +2,13 @@
 Run MeDEStrand.
 
 Usage:
-    run_medestrand.R -b BAM -o OUTPUT [ -m MEDESTRAND ]
+    run_medestrand.R -b BAM -o OUTPUT [ -m MEDESTRAND --bsgenome BSGENOME ]
 
 Options:
     -b --bam BAM                Path to input BAM file
-    -o --output OUTPUT          Output path (RDS file)
+    -o --output OUTPUT          Output path (feather file format)
     -m --medestrand MEDESTRAND  Path to MeDEStrand Package
+    --bsgenome BSGENOME         Name of BSgenome package, or path to BSgenome package files
 ' -> doc
 
 if (! interactive()) {
@@ -23,8 +24,17 @@ if (is.null(args[['medestrand']])) {
 } else {
     devtools::load_all(args[['medestrand']])
 }
+
+if (file.exists(paste(args[['--bsgenome']], 'DESCRIPTION', sep='/'))) {
+    devtools::load_all(args[['--bsgenome']])
+    BSgenome_name = basename(args[['--bsgenome']])
+} else {
+    BSgenome_name = args[['--bsgenome']]
+}
+
 library(GenomicRanges)
-library(BSgenome.Hsapiens.UCSC.hg38)
+library(tidyverse)
+library(arrow)
 
 methylset <- MeDEStrand.createSet(
     file = args[['bam']],
@@ -39,6 +49,15 @@ methylset <- MeDEStrand.createSet(
 
 CS = MeDEStrand.countCG(pattern='CG', refObj=methylset)
 
-absolute_methylation = MeDEStrand.binMethyl(MSetInput = methylset, CSet = CS, Granges = TRUE)
+absolute_methylation = MeDEStrand.binMethyl(MSetInput = methylset, CSet = CS, Granges = TRUE, BSgenome=getBSgenome(BSgenome_name))
 
-saveRDS(absolute_methylation, args[['output']])
+absolute_methylation %>%
+    as_tibble %>%
+    dplyr::select(
+        bin_chr = seqnames,
+        bin_start = start,
+        bin_end = end,
+        CF,
+        binMethyl
+    ) %>%
+    write_feather(args[['output']])
