@@ -10,7 +10,7 @@ plot_scatter_bin_methylation <- function(bin_methylation_data, nbfit) {
       gc_content = gc_bin %>% as.character %>% as.numeric
     ) %>%
     mutate(
-      predicted_coverage = exp(predict(nbfit, newdata=.)),
+      predicted_coverage = predict(nbfit, newdata=.)^2,
       gc_label = sprintf('%s%% GC', gc_bin %>% as.character() %>% as.numeric * 100)
     )
 
@@ -58,7 +58,7 @@ plot_bin_methylation_fit <- function(bin_methylation_data, nbfit) {
       unmethylated_mu = exp(predict(nbfit$zero_model$mu_fit, newdata=.)),
       unmethylated_theta = exp(predict(nbfit$zero_model$theta_fit, newdata=.)),
       unmethylated_fit = dnbinom(x, mu = unmethylated_mu, size = unmethylated_theta) * count,
-      methylated_mu = ifelse(cpg_count == 0, NA, exp(predict(nbfit$final_model, newdata = . ))),
+      methylated_mu = ifelse(cpg_count == 0, NA, predict(nbfit$final_model, newdata = . )^2),
       methylated_theta = nbfit$final_model$theta,
       methylated_fit = dnbinom(x, mu = methylated_mu, size =  methylated_theta) * count
     ) %>%
