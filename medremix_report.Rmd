@@ -8,6 +8,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+library(arrow)
 library(tidyverse)
 library(cowplot)
 library(ggthemr)
@@ -16,8 +17,178 @@ ggthemr('fresh')
 library(viridis)
 
 options(dplyr.summarise.inform = FALSE)
-
 ```
+
+library(MASS)
+
+# Load data
+bin_stats <- read_tsv('~/Downloads/bin_stats_TGL01_0001_Ct_T_PE_318.tsv')
+
+# Extract spike-in data
+arabidopsis_bin_stats <- bin_stats %>%
+  filter(bin_chr %in% c('F19K16', 'F24B22')) %>%
+  mutate(coverage = as.integer(round(mean_coverage)))
+
+# Remove outliers of GC content
+arabidopsis_gc_fit <- with(
+  arabidopsis_bin_stats,
+  fitdistr(gc_content, 'normal')
+)
+
+arabidopsis_bin_stats_full <- arabidopsis_bin_stats %>%
+  mutate(
+    z_gc_content = (gc_content - arabidopsis_gc_fit$estimate[1]) / arabidopsis_gc_fit$estimate[2]
+  ) %>%
+  filter(abs(z_gc_content) <= 5)
+
+# Pull the methylated data
+arabidopsis_bin_stats_methylated <- arabidopsis_bin_stats_full %>%
+  filter(bin_chr == 'F19K16')
+
+# Build Methylated model
+arabidopsis_model_methylated <- glm.nb(
+  coverage ~ cpg_count,
+  data = arabidopsis_bin_stats_methylated,
+  link = 'sqrt'
+)
+
+summary(arabidopsis_model_methylated)
+
+# Visualize Methylated Model
+arabidopsis_model_prediction <- arabidopsis_bin_stats %>%
+  mutate(gc_content = round(gc_content * 10) / 10) %>%
+  distinct(gc_content) %>%
+  crossing(cpg_count = seq(1, 20)) %>%
+  mutate(methylated_prediction = predict(arabidopsis_model_methylated, newdata = .)^2)
+
+arabidopsis_bin_stats %>%
+  filter(bin_chr == 'F19K16') %>%
+  mutate(gc_bin = round(gc_content * 10) / 10) %>%
+  ggplot(aes(
+    x = cpg_count,
+    y = coverage
+  )) +
+  geom_point() +
+  facet_wrap(~ gc_bin) +
+  geom_line(aes(
+    x = cpg_count,
+    y = methylated_prediction
+  ), data = arabidopsis_model_prediction %>% rename(gc_bin = gc_content))
+
+arabidopsis_prediction_histograms <- arabidopsis_bin_stats_methylated %>%
+  mutate(
+    gc_content = round(gc_content * 10) / 10,
+    cpg_count = round(cpg_count / 4) * 4
+  ) %>%
+  distinct(gc_content, cpg_count) %>%
+  crossing(coverage = 1:max(arabidopsis_bin_stats_methylated$coverage)) %>%
+  mutate(
+    mu = predict(arabidopsis_model_methylated, newdata = .)^2
+  ) %>%
+  distinct() %>%
+  left_join(
+    arabidopsis_bin_stats_methylated %>%
+      mutate(
+          gc_content = round(gc_content * 10) / 10,
+          cpg_count = round(cpg_count / 4) * 4
+      ) %>%
+      group_by(gc_content, cpg_count) %>%
+      summarise(n = n())
+  ) %>%
+  mutate(
+    prediction = n * dnbinom(coverage, size = arabidopsis_model_methylated$theta, mu = mu) * 100
+  )
+
+arabidopsis_bin_stats %>%
+  filter(bin_chr == 'F19K16') %>%
+  mutate(
+    gc_bin = round(gc_content * 10) / 10,
+    cpg_bin = round(cpg_count / 4) * 4
+  ) %>%
+  ggplot(aes(
+    x = coverage 
+  )) +
+  geom_histogram() +
+  geom_line(
+    aes(
+      x = coverage,
+      y = prediction
+    ),
+    data = arabidopsis_prediction_histograms %>% rename(gc_bin = gc_content, cpg_bin = cpg_count),
+    color = 'red'
+  ) +
+  facet_grid(cpg_bin ~ gc_bin, scales='free_y')
+
+# Pull the unmethylated data
+arabidopsis_bin_stats_unmethylated <- arabidopsis_bin_stats_full %>%
+  filter(bin_chr == 'F24B22')
+
+# Build unmethylated model
+
+arabidopsis_model_unmethylated <- glm.nb(
+  coverage ~ gc_content,
+  data = arabidopsis_bin_stats_unmethylated,
+  link = 'log'
+)
+
+summary(arabidopsis_model_unmethylated)
+
+arabidopsis_bin_stats_unmethylated %>%
+  ggplot(aes(
+    x = gc_content,
+    y = coverage
+  )) +
+  geom_point() +
+  geom_line(
+    aes(
+      y = mu
+    ),
+    data = tibble(
+      gc_content = seq(0, 1, 0.01)
+    ) %>%
+      mutate(
+        mu = exp(predict(arabidopsis_model_unmethylated, .))
+    )
+  )
+
+# Test fit against human data
+
+arabidopsis_methylated_genome_copies <- with(arabidopsis_bin_stats_methylated, sum(coverage_bp) / max(arabidopsis_bin_stats_methylated$bin_end))
+
+chr_copies_df <- bin_stats %>%
+  filter(mean_coverage >= 3) %>%
+  group_by(bin_chr) %>%
+  summarise(
+    chr_copies = sum(coverage_bp) / (sum(bin_end - bin_start))
+  )
+
+chr_copies <- chr_copies_df$chr_copies
+names(chr_copies) <- chr_copies_df$bin_chr
+
+chosen_chr = 'chr17'
+bin_stats %>%
+  filter(bin_chr == chosen_chr) %>%
+  filter(row_number() %% 100 == 0) %>%
+  ggplot(aes(
+    x = cpg_count,
+    y = mean_coverage
+  )) +
+  geom_point(alpha=0.3) +
+  geom_line(aes(
+      y = mu
+    ),
+    data = tibble(cpg_count = 1:50) %>%
+      mutate(mu = predict(arabidopsis_model_methylated, newdata=.)^2 * chr_copies[[chosen_chr]] / chr_copies[['F19K16']])
+  )
+
+
+arabidopsis_bin_stats %>%
+  ggplot(aes(
+    x = cpg_count,
+    y = coverage
+  )) +
+  geom_point() +
+  facet_wrap(~ bin_chr)
 
 # Introduction
 
@@ -46,7 +217,7 @@ We begin by examining arabidopsis chromosomes.
 
 ```{r arabidopsis}
 medremix_output %>%
-  filter(bin_chr %in% c('Arabidopsis1', 'Arabidopsis3')) %>%
+  filter(bin_chr %in% c('F19K16', 'F24B22')) %>%
   ggplot(aes(
     x = cpg_count,
     y = coverage,
