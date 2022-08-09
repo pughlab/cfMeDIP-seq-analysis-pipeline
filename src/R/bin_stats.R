@@ -35,7 +35,7 @@ library(Rsamtools)
 library(tidyverse)
 
 BIN_WIDTH = 300
-FRAGMENT_LENGTH_LIMIT = 500
+FRAGMENT_LENGTH_LIMIT = 2000
 
 bam_file <- BamFile(args[['bam']], asMates=TRUE)
 chrom_length <- bam_file %>% seqinfo %>% seqlengths %>% .[args[['chrom']]]
@@ -111,24 +111,39 @@ message(
     )
 )
 
-fragment_bin_overlaps <- findOverlaps(GRanges(fragments_tibble_limited), bins)
+if (nrow(fragments_tibble_limited) > 0) {
+    fragment_bin_overlaps <- findOverlaps(GRanges(fragments_tibble_limited), bins)
 
-bin_coverage <- bind_cols(
+    bin_fragments <- bind_cols(
         fragments_tibble_limited[queryHits(fragment_bin_overlaps), ],
         bins[subjectHits(fragment_bin_overlaps)] %>%
             as_tibble %>%
             rename(bin_chr = seqnames, bin_start = start, bin_end = end) %>%
             select(-width)
-    ) %>%
+        )
+} else {
+    bin_fragments <- bind_cols(
+        fragments_tibble_limited,
+        bins %>%
+            as_tibble %>%
+            rename(bin_chr = seqnames, bin_start = start, bin_end = end) %>%
+            select(-width) %>%
+            filter(FALSE)
+        )
+}
+
+bin_coverage <- bin_fragments %>%
     mutate(
-        overlap_length = pmin(end, bin_end) - pmax(start, bin_start) + 1
+        overlap_length = pmin(end, bin_end) - pmax(start, bin_start) + 1,
+        fraction_of_read_overlapping = overlap_length / (end - start)
     ) %>%
     group_by(bin_chr, bin_start, bin_end) %>%
     summarise(
         n_fragments = n(),
-        coverage_bp = sum(overlap_length),
-        mean_fragment_length = mean(width),
-        mean_fragment_mapq = mean(mean_mapq)
+        coverage_bp = sum(overlap_length, na.rm=T),
+        fractional_reads = sum(fraction_of_read_overlapping, na.rm=T),
+        mean_fragment_length = mean(width, na.rm=T),
+        mean_fragment_mapq = mean(mean_mapq, na.rm=T),
     ) %>%
     ungroup() %>%
     right_join(
@@ -139,7 +154,8 @@ bin_coverage <- bind_cols(
     ) %>%
     replace_na(list(
         n_fragments = 0,
-        coverage_bp = 0
+        coverage_bp = 0,
+        fractional_reads = 0
     )) %>%
     arrange(bin_chr, bin_start) %>%
     mutate(mean_coverage = coverage_bp / BIN_WIDTH) %>%
