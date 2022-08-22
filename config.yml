@@ -18,11 +18,6 @@ paths:
     medestrand_path: /cluster/home/zhaoe/git/MeDEStrand
 
 data:
-
-  # Base Path:
-  # This is the directory which will contain all of the pipeline's output.
-  base_path: /cluster/projects/cgptip/projects/INSPIRE/analysis/cfMedip/pipeline
-
   # Excluded Cases:
   # Any cases listed here will be excluded from analysis. The IDs must correspond
   # to the sample_name column of the samplesheet.
@@ -38,6 +33,10 @@ data:
   # under data > cohorts > mycohort > settings > genome, and that would override the 
   # default genome specified below.
   defaults:
+    # Output Directory: Base path to where this project outputs. It will automatically append
+    # the name of the project. e.g. if output_dir = /path/to/output/, then the project
+    # named "myproject" results will go to /path/to/output/myproject.
+    output_dir: /cluster/projects/cgptip/projects/INSPIRE/analysis/cfMedip
 
     # Genome: path to default genome .fa file.
     genome: /cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/hg38_F19K16_F24B22/hg38_F19K16_F24B22.fa
@@ -62,19 +61,32 @@ data:
 
     # ConsensusCruncher barcode setting: Use either
     # --blist BARCODELIST or --bpattern PATTERN below.
-    barcodes: '--blist /cluster/projects/pughlab/projects/ezhao/assets/reference/barcodes/barcode_idt.txt'
+    barcodes: '(?P<umi_1>^[ACGT]{3}[ACG])(?P<discard_1>T)|(?P<umi_1>^[ACGT]{3}T)'
 
     # Trim Galore! settings: You may modify the below settings as you
     # like, which will be provided as parameters to Trim Galore!
-    trimgalore: '--clip_R1 10 --clip_R2 10'
+    trimgalore: '-q 20 --stringency 3 --length 20 '
+
+    # Samples to exclude, as a list
+    exclude:
 
     # Signatures: These are files containing regions of interest, which will get pulled from
     # the output data into summary matrices of the results.
     signatures:
+      cancer_tcga_zhao: data/manual/private_signatures/tcga_signature.tsv
+      deconvolution_nmf_purified: data/manual/private_signatures/deconvolution_nmf_purified.tsv
       cancer_tcga_vrba_2017: src/external/methylation-signatures-resource/signatures/cancer_tcga_vrba_2017/hg38.tsv
       rfpurify: src/external/methylation-signatures-resource/signatures/cancer_rfpurify/hg38.tsv
       methylcibersort: src/external/methylation-signatures-resource/signatures/methylcibersort/hg38.tsv
       althaf_immune: data/manual/private_signatures/althaf_immune_signature_hg38.tsv
+      canonical_promoters: data/manual/private_signatures/canonical_transcript_promoters.tsv
+      meth_atlas: /cluster/home/zhaoe/git/methylation-signatures-resource/signatures/meth_atlas_reference/hg38.tsv
+      t_cell_states_hypomethylated: data/manual/private_signatures/GSE141878_t_cell_hypomethylated_regions.tsv
+      xu_ici_prognostic: data/manual/private_signatures/xu_ici_prognostic_signature.tsv
+      arabidopsis_bac: data/manual/private_signatures/arabidopsis_bac.tsv
+
+    signatures_bed:
+      cancer_tcga_zhao: data/manual/private_signatures/tcga_signature_cpgonly.bed
 
   # Cohorts:
   # Each cohort is named and contains a samplesheet.
@@ -106,11 +118,39 @@ data:
     inspire:
       samplesheet: data/manual/samplesheets/inspire_samplesheet.csv
       active: True
+    awadalla-breast:
+      samplesheet: data/manual/samplesheets/awadalla_breast_samplesheet.csv
+      active: False
+      settings:
+        output_dir: '/cluster/projects/pughlab/projects/cfmedip_pipeline'
+    kuihcc-normal:
+      samplesheet: data/manual/samplesheets/kuihcc_normal_samplesheet.csv
+      active: False
+      settings:
+        output_dir: '/cluster/projects/pughlab/projects/cfmedip_pipeline'
+    oracle:
+      samplesheet: data/manual/samplesheets/oracle_samplesheet.csv
+      active: False
     charmnormal:
       samplesheet: data/manual/samplesheets/charm_normal.csv
       active: False
     kuinormal:
       samplesheet: data/manual/samplesheets/kuinormal_samplesheet.csv
+      active: False
+      settings:
+        exclude:
+          - HCC_NC_19_S7
+          - HCC_NC_21_S9
+        output_dir: '/cluster/projects/pughlab/projects/cfmedip_pipeline'
+        genome: /cluster/tools/data/genomes/human/hg38/iGenomes/Sequence/BWAIndex/genome.fa
+        bwa_index: /cluster/tools/data/genomes/human/hg38/iGenomes/Sequence/BWAIndex/genome.fa
+        bsgenome:
+          human: '/cluster/projects/pughlab/projects/ezhao/assets/reference/genomes/bsgenome/BSgenome.Hsapiens.UCSC.hg38'
+        barcodes: '--bpattern NNT'
+        chromosomes:
+          human: 'chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22'
+    justinhnc:
+      samplesheet: data/manual/samplesheets/samplesheet_Justin_HN_Norm_cfDNA_PBL.csv
       active: False
       settings:
         genome: /cluster/tools/data/genomes/human/hg38/iGenomes/Sequence/BWAIndex/genome.fa
