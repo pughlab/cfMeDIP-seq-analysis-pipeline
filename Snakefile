@@ -5,16 +5,6 @@ import statistics
 
 configfile: "config.yml"
 
-path_to_data = config['data']['base_path']
-
-excluded_cases = config['data']['excluded_cases']
-if excluded_cases:
-    print('Excluding cases:')
-    for case in excluded_cases:
-        print(case)
-else:
-    excluded_cases = []
-
 # ---------------------------- #
 #  Important Shared Functions  #
 # ---------------------------- #
@@ -42,12 +32,18 @@ def get_cohort_config(cohort):
                 )))
     return(config_data)
 
+def get_cohort_outdir(cohort):
+    config_data = get_cohort_config(cohort)
+    return(config_data['output_dir'])
+
 def get_cohort_data(cohort):
     """Parses the samplesheet for a specific cohort.
     Also removes any excluded_cases from the samplesheet before it is returned.
     """
+    cohort_config = get_cohort_config(cohort);
     samplesheet = pd.read_csv(config['data']['cohorts'][cohort]['samplesheet'], comment='#').drop_duplicates()
-    samplesheet = samplesheet[~samplesheet.sample_name.isin(excluded_cases)]
+    if 'exclude' in cohort_config and cohort_config['exclude'] is not None:
+        samplesheet = samplesheet[~samplesheet.sample_name.isin(cohort_config['exclude'])]
     return(samplesheet)
 
 def get_fastq_path(cohort, sample, library, read_in_pair=1):
@@ -112,11 +108,11 @@ def clean(command):
         command = command.replace('  ', ' ')
     return(command.strip())
 
-def get_cohort_signature_pairs():
+def get_cohort_signature_pairs(bed=False):
     """Iterator returning every signature for every active cohort."""
     for active_cohort in get_active_cohorts():
-        for signature in get_cohort_config(active_cohort)['signatures']:
-            yield (active_cohort, signature)
+        for signature in get_cohort_config(active_cohort)['signatures_bed' if bed else 'signatures']:
+            yield (get_cohort_outdir(active_cohort), active_cohort, signature)
 
 # ------------------------------ #
 #  Beginning of Snakemake Rules  #
@@ -124,22 +120,29 @@ def get_cohort_signature_pairs():
 
 rule all:
     input:
-        #expand(
-        #    path_to_data + '/{cohort}/results/results_matrix/{cohort}_{colname}{ext}',
-        #    cohort = get_active_cohorts(),
-        #    colname = ['coverage', 'posterior'],
-        #    ext = ['.csv']
-        #),
-        expand([
-            path_to_data + '/inspire/results/extract_signature_matrix/{}-{}-{{valuetype}}.parquet'.format(cohort, signature)
-                for cohort, signature in get_cohort_signature_pairs()
+        ['{output_dir}/pipeline/{cohort}/results/qc/{sample}_qc_complete'.format(
+            output_dir = get_cohort_outdir(cohort),
+            cohort = cohort,
+            sample = sample
+            ) for cohort,sample in get_all_samples_with_cohorts()
+        ],
+        ['{output_dir}/pipeline/{cohort}/results/aggregated/all_insertsize.tsv'.format(
+            output_dir = get_cohort_outdir(cohort),
+            cohort = cohort
+            ) for cohort in get_active_cohorts()
+        ],
+        [
+            '{}/pipeline/{}/results/aggregated/all_bedpe/{}.tsv'.format(output_dir, cohort, signature)
+            for output_dir, cohort, signature in get_cohort_signature_pairs(bed=True)
+        ],
+        expand(
+            [
+            '{}/pipeline/{}/results/extract_signature_matrix/{}-{}-{{valuetype}}.parquet'.format(output_dir, cohort, cohort, signature)
+                for output_dir, cohort, signature in get_cohort_signature_pairs()
             ],
-            valuetype = ['coverage', 'posterior', 'medestrand'])
-        #[path_to_data + '/{cohort}/results/bam_to_wig/{sample}_counts.wig'.format(
-        #        cohort=v[0],
-        #        sample=v[1]
-        #    ) for v in get_all_samples_with_cohorts()
-        #],
+            valuetype = ['coverage', 'posterior']
+            #valuetype = ['coverage', 'posterior', 'medestrand']
+        )
 
 # ------------------------------------------ #
 #  Install conda dependencies automatically  #
@@ -163,6 +166,7 @@ rule install_dependencies:
         'conda_env/fastqc_installed',
         'conda_env/qualimap_installed',
         'conda_env/samtools_installed',
+        'conda_env/umitools_installed',
         'conda_env/trimgalore_installed'
     output:
         'conda_env/dependencies'
@@ -204,6 +208,13 @@ rule samtools:
     shell:
         'touch {output}'
 
+rule umitools:
+    output:
+        'conda_env/umitools_installed'
+    conda: 'conda_env/umitools.yml'
+    shell:
+        'touch {output}'
+
 rule trimgalore:
     output:
         'conda_env/trimgalore_installed'
@@ -219,7 +230,7 @@ rule gunzip_fastq:
     input:
         lambda wildcards: get_fastq_path(wildcards.cohort, wildcards.sample, int(wildcards.lib), int(wildcards.read)),
     output:
-        temp(path_to_data + '/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R{read}.fastq')
+        temp('{output_dir}/pipeline/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R{read}.fastq')
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     shell:
         'gunzip -dc {input} > {output}'
@@ -227,10 +238,10 @@ rule gunzip_fastq:
 # QC of input FASTQs using FASTQC
 rule fastqc_fastq:
     input:
-        path_to_data + '/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R{read}.fastq'
+        '{output_dir}/pipeline/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R{read}.fastq'
     output:
-        html=path_to_data + '/{cohort}/results/qc_input/{sample}_lib{lib}_R{read}_fastqc.html',
-        zipfile=path_to_data + '/{cohort}/results/qc_input/{sample}_lib{lib}_R{read}_fastqc.zip'
+        html='{output_dir}/pipeline/{cohort}/results/qc_input/{sample}_lib{lib}_R{read}_fastqc.html',
+        zipfile='{output_dir}/pipeline/{cohort}/results/qc_input/{sample}_lib{lib}_R{read}_fastqc.zip'
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     params:
         outdir = lambda wildcards, output: '/'.join(output.html.split('/')[0:-1])
@@ -238,50 +249,86 @@ rule fastqc_fastq:
     shell:
         'fastqc --outdir {params.outdir} {input}'
 
+
+# ---------------------------------- #
+#  Extract Barcodes using UMI Tools  #
+# ---------------------------------- #
+#
+# This has superseded the use of ConsensusCruncher.
+# UMI barcodes are removed and placed into FASTQ headers.
+rule umi_tools_extract:
+    input:
+        R1_qc = '{output_dir}/pipeline/{cohort}/results/qc_input/{sample}_lib{lib}_R1_fastqc.html',
+        R2_qc = '{output_dir}/pipeline/{cohort}/results/qc_input/{sample}_lib{lib}_R2_fastqc.html',
+        R1 = '{output_dir}/pipeline/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R1.fastq',
+        R2 = '{output_dir}/pipeline/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R2.fastq'
+    output:
+        R1 = temp('{output_dir}/pipeline/{cohort}/tmp/umi_tools_extract/{sample}_lib{lib}_umitools_R1.fastq'),
+        R2 = temp('{output_dir}/pipeline/{cohort}/tmp/umi_tools_extract/{sample}_lib{lib}_umitools_R2.fastq'),
+        logfile = '{output_dir}/pipeline/{cohort}/results/umi_tools_extract/{sample}_lib{lib}_umitools_log.txt'
+    params:
+        barcodes = lambda wildcards: get_cohort_config(wildcards.cohort)['barcodes']
+    resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
+    conda: 'conda_env/umitools.yml'
+    shell:
+        'umi_tools extract '
+        '--extract-method=regex '
+        '--stdin={input.R1} '
+        '--read2-in={input.R2} '
+        '--bc-pattern="{params.barcodes}" '
+        '--bc-pattern2="{params.barcodes}" '
+        '--stdout={output.R1} '
+        '--read2-out={output.R2} '
+        '--log={output.logfile} '
+
 # Extract Barcodes using ConsensusCruncher
 # Pulls the path to extract_barcodes.py from config > paths > dependencies > extract_barcodes_path
-rule extract_barcodes:
-    input:
-        R1_qc = path_to_data + '/{cohort}/results/qc_input/{sample}_lib{lib}_R1_fastqc.html',
-        R2_qc = path_to_data + '/{cohort}/results/qc_input/{sample}_lib{lib}_R2_fastqc.html',
-        R1 = path_to_data + '/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R1.fastq',
-        R2 = path_to_data + '/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R2.fastq'
-    output:
-        R1 = temp(path_to_data + '/{cohort}/tmp/extract_barcodes/{sample}_lib{lib}_extract_barcode_R1.fastq'),
-        R2 = temp(path_to_data + '/{cohort}/tmp/extract_barcodes/{sample}_lib{lib}_extract_barcode_R2.fastq')
-    params:
-        outprefix = lambda wildcards, output: output.R1.split('_barcode_')[0],
-        barcodes = lambda wildcards: get_cohort_config(wildcards.cohort)['barcodes']
-    resources: cpus=1, mem_mb=16000, time_min='5-00:00:00'
-    conda: 'conda_env/biopython.yml'
-    shell:
-        clean(r'''
-        python {extract_barcodes}
-            --read1 {{input.R1}}
-            --read2 {{input.R2}}
-            --outfile {{params.outprefix}}
-            {{params.barcodes}}
-        '''.format(extract_barcodes = config['paths']['dependencies']['extract_barcodes_path']))
+#rule extract_barcodes:
+#    input:
+#        R1_qc = '{output_dir}/pipeline/{cohort}/results/qc_input/{sample}_lib{lib}_R1_fastqc.html',
+#        R2_qc = '{output_dir}/pipeline/{cohort}/results/qc_input/{sample}_lib{lib}_R2_fastqc.html',
+#        R1 = '{output_dir}/pipeline/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R1.fastq',
+#        R2 = '{output_dir}/pipeline/{cohort}/tmp/gunzip_fastq/{sample}_lib{lib}_R2.fastq'
+#    output:
+#        R1 = temp('{output_dir}/pipeline/{cohort}/tmp/extract_barcodes/{sample}_lib{lib}_extract_barcode_R1.fastq'),
+#        R2 = temp('{output_dir}/pipeline/{cohort}/tmp/extract_barcodes/{sample}_lib{lib}_extract_barcode_R2.fastq')
+#    params:
+#        outprefix = lambda wildcards, output: output.R1.split('_barcode_')[0],
+#        barcodes = lambda wildcards: get_cohort_config(wildcards.cohort)['barcodes']
+#    resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
+#    conda: 'conda_env/biopython.yml'
+#    shell:
+#        clean(r'''
+#        python {extract_barcodes}
+#            --read1 {{input.R1}}
+#            --read2 {{input.R2}}
+#            --outfile {{params.outprefix}}
+#            {{params.barcodes}}
+#        '''.format(extract_barcodes = config['paths']['dependencies']['extract_barcodes_path']))
 
 # Trims FASTQ using trimgalore to remove barcode sequences
 # By default, trims 10 base pairs from the 5' end, which seems to be correct for OICR cfMeDIP-seq output.
 # This can be configured in the config.yml under data > cohorts > settings > trimgalore.
 rule trim_fastq:
     input:
-        R1 = path_to_data + '/{cohort}/tmp/extract_barcodes/{sample}_lib{lib}_extract_barcode_R1.fastq',
-        R2 = path_to_data + '/{cohort}/tmp/extract_barcodes/{sample}_lib{lib}_extract_barcode_R2.fastq'
+        R1 = '{output_dir}/pipeline/{cohort}/tmp/umi_tools_extract/{sample}_lib{lib}_umitools_R1.fastq',
+        R2 = '{output_dir}/pipeline/{cohort}/tmp/umi_tools_extract/{sample}_lib{lib}_umitools_R2.fastq',
     output:
-        trimmed_1 = temp(path_to_data + '/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_extract_barcode_R1_val_1.fq'),
-        trimmed_2 = temp(path_to_data + '/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_extract_barcode_R2_val_2.fq'),
-        report_1 = path_to_data + '/{cohort}/results/qc/{sample}_lib{lib}_extract_barcode_R1.fastq_trimming_report.txt',
-        report_2 = path_to_data + '/{cohort}/results/qc/{sample}_lib{lib}_extract_barcode_R2.fastq_trimming_report.txt'
+        trimmed_1 = temp('{output_dir}/pipeline/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_umitools_R1_val_1.fq'),
+        trimmed_2 = temp('{output_dir}/pipeline/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_umitools_R2_val_2.fq'),
+        report_1 = '{output_dir}/pipeline/{cohort}/results/qc/{sample}_lib{lib}_umitools_R1.fastq_trimming_report.txt',
+        report_2 = '{output_dir}/pipeline/{cohort}/results/qc/{sample}_lib{lib}_umitools_R2.fastq_trimming_report.txt'
     params:
         outdir = lambda wildcards, output: '/'.join(output.trimmed_1.split('/')[0:-1]),
         trimgalore_settings = lambda wildcards: get_cohort_config(wildcards.cohort)['trimgalore']
     resources: cpus=4, mem_mb=8000, time_min='24:00:00'
     conda: 'conda_env/trimgalore.yml'
     shell:
-        'trim_galore --cores 4 --dont_gzip --paired {params.trimgalore_settings} --output_dir {params.outdir} {input.R1} {input.R2} && cp ' + path_to_data + '/{wildcards.cohort}/tmp/trim_fastq/{wildcards.sample}_lib{wildcards.lib}_extract_barcode_R*.fastq_trimming_report.txt ' + path_to_data + '/{wildcards.cohort}/results/qc'
+        'trim_galore --cores 4 --dont_gzip --paired '
+        '{params.trimgalore_settings} '
+        '--output_dir {params.outdir} '
+        '{input.R1} {input.R2} '
+        '&& mv {wildcards.output_dir}/pipeline/{wildcards.cohort}/tmp/trim_fastq/{wildcards.sample}_lib{wildcards.lib}_umitools_R*.fastq_trimming_report.txt {wildcards.output_dir}/pipeline/{wildcards.cohort}/results/qc '
 
 # --------------------------- #
 #  Align FASTQs to reference  #
@@ -306,10 +353,10 @@ def get_read_group_from_fastq(fastq_file, sample_name):
 # Run BWA mem on FASTQs after extracting barcodes.
 rule bwa_mem:
     input:
-        path_to_data + '/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_extract_barcode_R1_val_1.fq',
-        path_to_data + '/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_extract_barcode_R2_val_2.fq',
+        '{output_dir}/pipeline/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_umitools_R1_val_1.fq',
+        '{output_dir}/pipeline/{cohort}/tmp/trim_fastq/{sample}_lib{lib}_umitools_R2_val_2.fq',
     output:
-        temp(path_to_data + '/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sam')
+        temp('{output_dir}/pipeline/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sam')
     resources: cpus=4, mem_mb=16000, time_min='72:00:00'
     params:
         read_group = lambda wildcards, input: get_read_group_from_fastq(
@@ -328,20 +375,18 @@ rule bwa_mem:
 # Converts SAM to BAM with sorting
 rule sam_to_sorted_bam:
     input:
-        path_to_data + '/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sam'
+        '{output_dir}/pipeline/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sam'
     output:
-        bam = temp(path_to_data + '/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sorted.bam'),
-        index = temp(path_to_data + '/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sorted.bam.bai'),
+        bam = temp('{output_dir}/pipeline/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sorted.bam'),
+        index = temp('{output_dir}/pipeline/{cohort}/tmp/bwa_mem/{sample}_lib{lib}.sorted.bam.bai'),
     resources: cpus=32, mem_mb=30000, time_min='72:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
         # Try it without fixmate for replication purposes
         #"samtools view -buS -f 2 -F 4 -@4 {input} | samtools fixmate -m - - | samtools sort -@4 -o {output.bam} && samtools index {output.bam}"
-        clean(r'''
-        samtools view -buS -f 2 -F 4 -@32 {input} |
-        samtools fixmate -m - - |
-        samtools sort -@32 -o {output.bam} && samtools index {output.bam}
-        ''')
+        'samtools view -buS -f 2 -F 4 -@32 {input} | '
+        'samtools fixmate -m - - | '
+        'samtools sort -@32 -o {output.bam} && samtools index {output.bam} '
 
 def get_libraries_of_sample(sample):
     """Returns all library indices of a sample based on samplesheet."""
@@ -353,28 +398,59 @@ def get_libraries_of_sample(sample):
 rule merge_bam:
     input:
         lambda wildcards: expand(
-                path_to_data + '/{{cohort}}/tmp/bwa_mem/' + wildcards.sample + '_lib{lib}.sorted.bam',
+                '{{output_dir}}/pipeline/{{cohort}}/tmp/bwa_mem/' + wildcards.sample + '_lib{lib}.sorted.bam',
                 lib=get_libraries_of_sample(wildcards.sample)
         )
     output:
-        temp(path_to_data + '/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam')
+        bam = temp('{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam'),
+        index = temp('{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam.bai'),
+        stat = '{output_dir}/pipeline/{cohort}/results/merge_bam/{sample}.aligned.sorted.bam.stat.txt'
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
-        'samtools merge {output} {input} && samtools index {output}'
+        'samtools merge {output.bam} {input} && '
+        'samtools index -@ {threads} {output.bam} && '
+        'samtools stats -@ {threads} {output.bam} > {output.bam_stat} '
+
+# We next deduplicate with UMItools.
+rule bam_umitools_dedup:
+    input:
+        '{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam'
+    output:
+        bam = temp('{output_dir}/pipeline/{cohort}/results/bam/{sample}_tmp.bam')
+    params:
+        stat_prefix = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup',
+    conda: 'conda_env/umitools.yml'
+    shell:
+        'umi_tools dedup --paired -I {input} -S {output.bam} --umi-separator="_" --output-stats={params.stat_prefix}'
+
+# We apply some filters to the reads, yielding final BAM file
+rule finalize_bam:
+    input:
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}_tmp.bam',
+    output:
+        bam = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        index = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
+        bam_stat = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.stats.txt',
+    conda: 'conda_env/samtools.yml'
+    shell:
+        'samtools view -b -f 2 -F 2828 --threads {threads} {input} > {output.bam} && '
+        'samtools index -@ {threads} {output.bam} && '
+        'samtools stats -@ {threads} {output.bam} > {output.bam_stat} '
 
 # Bam markdup and create index. 
+# Now superseded by UMItools dedup above
 # This step finalizes the definitive BAM file.
-rule bam_markdup:
-    input:
-        path_to_data + '/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam'
-    output:
-        bam = path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
-        index = path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam.bai'
-    resources: cpus=1, mem_mb=8000, time_min='24:00:00'
-    conda: 'conda_env/samtools.yml'
-    shell:
-        "samtools markdup -r {input} {output.bam} && samtools index {output.bam}"
+#rule bam_markdup:
+#    input:
+#        '{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam'
+#    output:
+#        bam = '{output_dir}/pipeline/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
+#        index = '{output_dir}/pipeline/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam.bai'
+#    resources: cpus=1, mem_mb=8000, time_min='24:00:00'
+#    conda: 'conda_env/samtools.yml'
+#    shell:
+#        "samtools markdup -r {input} {output.bam} && samtools index {output.bam}"
 
 # ----------------- #
 #  QC of BAM files  #
@@ -383,10 +459,10 @@ rule bam_markdup:
 # Run FASTQC on final BAM files.
 rule fastqc_bam:
     input:
-        path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
     output:
-        html = path_to_data + '/{cohort}/results/qc/{sample}.aligned.sorted.markdup_fastqc.html',
-        zipfile = path_to_data + '/{cohort}/results/qc/{sample}.aligned.sorted.markdup_fastqc.zip',
+        html = '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup_fastqc.html',
+        zipfile = '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup_fastqc.zip',
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     params:
         outdir = lambda wildcards, output: '/'.join(output.html.split('/')[0:-1])
@@ -397,16 +473,21 @@ rule fastqc_bam:
 # Run Qualimap QC metrics on final BAM files.
 rule qualimap_bam:
     input:
-        path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
     output:
-        html = path_to_data + '/{cohort}/results/qc/{sample}.aligned.sorted.markdup_fastqc.html',
+        html = '{output_dir}/pipeline/{cohort}/results/qc/qualimap_{sample}/qualimapReport.html',
+    params:
+        outdir = lambda wildcards, output: '/'.join(output.html.split('/')[0:-1])
+    conda: 'conda_env/qualimap.yml'
+    shell:
+        'qualimap bamqc -bam {input} -outdir {params.outdir}'
 
 # Run Flagstat to get basic stats on final BAM files.
 rule bam_flagstat:
     input:
-        path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
     output:
-        path_to_data + '/{cohort}/results/qc/{sample}.aligned.sorted.markdup.bam.flagstat',
+        '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup.bam.flagstat',
     resources: cpus=1, mem_mb=8000, time_min='1:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
@@ -415,10 +496,11 @@ rule bam_flagstat:
 # Unified QC rule which runs all of the above QCs
 rule bam_qc:
     input:
-        fastqc = path_to_data + '/{cohort}/results/qc/{sample}.aligned.sorted.markdup_fastqc.html',
-        flagstat = path_to_data + '/{cohort}/results/qc/{sample}.aligned.sorted.markdup.bam.flagstat',
+        fastqc = '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup_fastqc.html',
+        flagstat = '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup.bam.flagstat',
+        qualimap = '{output_dir}/pipeline/{cohort}/results/qc/qualimap_{sample}/qualimapReport.html',
     output:
-        path_to_data + '/{cohort}/results/qc/{sample}_qc_complete',
+        '{output_dir}/pipeline/{cohort}/results/qc/{sample}_qc_complete',
     resources: cpus=1, mem_mb=1000, time_min='00:01:00'
     conda: 'conda_env/samtools.yml'
     shell:
@@ -431,10 +513,10 @@ rule bam_qc:
 # Generate bin stats for each chromosome individually.
 rule bam_bin_stats:
     input:
-        path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
     output:
-        binstat = temp(path_to_data + '/{cohort}/tmp/bam_bin_stats/bin_stats_{sample}_{species}_{chrom}.tsv'),
-        filtered = path_to_data + '/{cohort}/results/bam_bin_stats/removed_bins_{sample}_{species}_{chrom}.tsv',
+        binstat = temp('{output_dir}/pipeline/{cohort}/tmp/bam_bin_stats/bin_stats_{sample}_{species}_{chrom}.tsv'),
+        filtered = '{output_dir}/pipeline/{cohort}/results/bam_bin_stats/removed_bins_{sample}_{species}_{chrom}.tsv',
     params:
         bsgenome = lambda wildcards: get_cohort_config(wildcards.cohort)['bsgenome'][wildcards.species],
     resources: cpus=1, mem_mb=30000, time_min='24:00:00'
@@ -460,15 +542,86 @@ for c in config['data']['cohorts']:
 # Merge the bin stats across all chromosomes.
 rule merge_bin_stats:
     input:
-        lambda wildcards: [path_to_data + '/{{cohort}}/tmp/bam_bin_stats/bin_stats_{{sample}}_{species}_{chrom}.tsv'.format(species=a[0], chrom=a[1]) for a in chromosomes[wildcards.cohort]],
+        lambda wildcards: ['{{output_dir}}/pipeline/{{cohort}}/tmp/bam_bin_stats/bin_stats_{{sample}}_{species}_{chrom}.tsv'.format(species=a[0], chrom=a[1]) for a in chromosomes[wildcards.cohort]],
     output:
-        path_to_data + '/{cohort}/results/merge_bin_stats/bin_stats_{sample}.feather'
+        '{output_dir}/pipeline/{cohort}/results/merge_bin_stats/bin_stats_{sample}.feather'
     params:
         paths = lambda wildcards, input: ','.join(input)
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     conda: 'conda_env/cfmedip_r.yml'
     shell:
         'Rscript src/R/row_bind_tables.R -p "{params.paths}" -o {output} --in-tsv --out-feather --omit-paths'
+
+# Converts bam to bedpe file - useful for fragmentomics work
+rule bam_to_chr_signature_bedpe:
+    input:
+        signature = lambda wildcards: get_cohort_config(wildcards.cohort)['signatures_bed'][wildcards.signature],
+        bam = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+    output: 
+        temp('{output_dir}/pipeline/{cohort}/tmp/bam_to_chr_signature_bedpe/{sample}/{signature}/{chromosome}.bedpe'),
+    resources: cpus=1, mem_mb=16000, time_min='24:00:00'
+    conda: 'conda_env/samtools.yml'
+    shell:
+        'samtools view -b -F 0x900 {input.bam} {wildcards.chromosome} | samtools sort -T /tmp/ -n - | bedtools pairtobed -abam stdin -b {input.signature} -bedpe > {output}'
+
+rule signature_bedpe:
+    input:
+        lambda wildcards: ['{{output_dir}}/pipeline/{{cohort}}/tmp/bam_to_chr_signature_bedpe/{{sample}}/{{signature}}/{chromosome}.bedpe'.format(chromosome=a[1]) for a in chromosomes[wildcards.cohort]],
+    output:
+        '{output_dir}/pipeline/{cohort}/results/signature_bedpe/{signature}/{sample}_{signature}.bedpe',
+    resources: cpus=1, mem_mb=4000, time_min='24:00:00'
+    shell:
+        'cat {input} > {output}'
+
+rule insert_size_distribution:
+    input:
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+    output:
+        txt = '{output_dir}/pipeline/{cohort}/results/insert_size_distribution/{sample}.picard.insertsize.txt',
+        pdf = '{output_dir}/pipeline/{cohort}/results/insert_size_distribution/{sample}.picard.insertsize.pdf',
+    conda: 'conda_env/samtools.yml'
+    resources: cpus=1, mem_mb=8000, time_min='24:00:00'
+    shell:
+        'picard CollectInsertSizeMetrics I={input} O={output.txt} H={output.pdf}'
+
+rule all_bedpe:
+    input:
+        lambda wildcards: expand(
+            '{{output_dir}}/pipeline/{{cohort}}/results/signature_bedpe/{{signature}}/{sample}_{{signature}}.bedpe',
+            sample = get_cohort_data(wildcards.cohort).sample_name.unique().tolist()
+        ),
+        '{output_dir}/pipeline/{cohort}/results/aggregated/all_insertsize.tsv',
+    output:
+        '{output_dir}/pipeline/{cohort}/results/aggregated/all_bedpe/{signature}.tsv',
+    run:
+        with open(output[0], 'w') as outfile:
+            for input_path in input:
+                for line in open(input_path):
+                    outfile.write('\t'.join(line.strip().split('\t') + [input_path.split('/')[-1]]) + '\n')
+
+rule all_insertsize:
+    input:
+        lambda wildcards: expand(
+            '{{output_dir}}/pipeline/{{cohort}}/results/insert_size_distribution/{sample}.picard.insertsize.txt',
+            sample = get_cohort_data(wildcards.cohort).sample_name.unique().tolist()
+        )
+    output:
+        '{output_dir}/pipeline/{cohort}/results/aggregated/all_insertsize.tsv',
+    run:
+        with open(output[0], 'w') as outfile:
+            first_file = True
+            for path in input:
+                infile = open(path)
+                for line in infile:
+                    if line.startswith('## HISTOGRAM'):
+                        break
+                if first_file:
+                    outfile.write('file\t' + next(infile))
+                    first_file = False
+                else:
+                    next(infile)
+                for line in infile:
+                    outfile.write(path.split('/')[-1] + '\t' + line)
 
 # ----------------------------------------------------------------------------- #
 #  Fit cfMeDIP-seq coverage stats to infer absolute methylation using MedReMix  #
@@ -477,10 +630,10 @@ rule merge_bin_stats:
 # This is the currently used negative binomial GLM approach to fitting
 rule cfmedip_nbglm:
     input:
-        path_to_data + '/{cohort}/results/merge_bin_stats/bin_stats_{sample}.feather'
+        '{output_dir}/pipeline/{cohort}/results/merge_bin_stats/bin_stats_{sample}.feather'
     output:
-        fit=path_to_data + '/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm.feather',
-        model=path_to_data + '/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm_model.Rds',
+        fit='{output_dir}/pipeline/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm.feather',
+        model='{output_dir}/pipeline/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm_model.Rds',
     resources: cpus=1, time_min='5-00:00:00', mem_mb=lambda wildcards, attempt: 16000 if attempt == 1 else 30000
     conda: 'conda_env/cfmedip_r.yml'
     shell:
@@ -489,9 +642,9 @@ rule cfmedip_nbglm:
 # Below is the full bayesian approach for fitting, which remains under development
 rule fit_bin_stats:
     input:
-        path_to_data + '/{cohort}/results/merge_bin_stats/bin_stats_{sample}.feather'
+        '{output_dir}/pipeline/{cohort}/results/merge_bin_stats/bin_stats_{sample}.feather'
     output:
-        path_to_data + '/{cohort}/results/fit_bin_stats/{sample}_fit_{method}.tsv'
+        '{output_dir}/pipeline/{cohort}/results/fit_bin_stats/{sample}_fit_{method}.tsv'
     resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
     conda: 'conda_env/cfmedip_r.yml'
     shell:
@@ -503,9 +656,9 @@ rule fit_bin_stats:
 
 rule medestrand:
     input:
-        path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
     output:
-        path_to_data + '/{cohort}/results/medestrand/{sample}_medestrand_output.feather',
+        '{output_dir}/pipeline/{cohort}/results/medestrand/{sample}_medestrand_output.feather',
     resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
     conda: 'conda_env/cfmedip_r.yml'
     params: bsgenome = lambda wildcards: get_cohort_config(wildcards.cohort)['bsgenome']['human']
@@ -532,19 +685,19 @@ rule medestrand:
 
 data_sources = {
     'coverage': {
-        'path': path_to_data + '/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm.feather',
+        'path': '{output_dir}/pipeline/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm.feather',
         'filetype': 'feather',
         'colname': 'coverage',
         'clip': '_fit_nbglm.feather'
     },
     'posterior': {
-        'path': path_to_data + '/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm.feather',
+        'path': '{output_dir}/pipeline/{cohort}/results/cfmedip_nbglm/{sample}_fit_nbglm.feather',
         'filetype': 'feather',
         'colname': 'methylated_posterior',
         'clip': '_fit_nbglm.feather'
     },
     'medestrand': {
-        'path': path_to_data + '/{cohort}/results/medestrand/{sample}_medestrand_output.feather',
+        'path': '{output_dir}/pipeline/{cohort}/results/medestrand/{sample}_medestrand_output.feather',
         'filetype': 'feather',
         'colname': 'binMethyl',
         'clip': '_medestrand_output.feather'
@@ -555,7 +708,7 @@ def get_matrix_inputs(wildcards):
     """Get paths of all files used to assemble a specific matrix.
     """
     samples = get_cohort_data(wildcards.cohort).sample_name.unique().tolist()
-    paths = expand(data_sources[wildcards.valuetype]['path'], cohort = wildcards.cohort, sample = samples)
+    paths = expand(data_sources[wildcards.valuetype]['path'], output_dir = wildcards.output_dir, cohort = wildcards.cohort, sample = samples)
     return(paths)
 
 # Assembles paths of files for assembling a matrix and
@@ -564,7 +717,7 @@ rule signature_matrix_paths:
     input:
         get_matrix_inputs
     output:
-        temp(path_to_data + '/{cohort}/tmp/signature_matrix_paths/matrix.{valuetype}.paths.txt')
+        temp('{output_dir}/pipeline/{cohort}/tmp/signature_matrix_paths/matrix.{valuetype}.paths.txt')
     run:
         with open(output[0], 'w') as out:
             out.write('\n'.join(input))
@@ -576,9 +729,9 @@ rule signature_matrix_paths:
 rule extract_signature_matrix:
     input:
         signature = lambda wildcards: get_cohort_config(wildcards.cohort)['signatures'][wildcards.signature],
-        paths = path_to_data + '/{cohort}/tmp/signature_matrix_paths/matrix.{valuetype}.paths.txt'
+        paths = '{output_dir}/pipeline/{cohort}/tmp/signature_matrix_paths/matrix.{valuetype}.paths.txt'
     output:
-        path_to_data + '/{cohort}/results/extract_signature_matrix/{cohort}-{signature}-{valuetype}.parquet'
+        '{output_dir}/pipeline/{cohort}/results/extract_signature_matrix/{cohort}-{signature}-{valuetype}.parquet'
     resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
     conda: 'conda_env/cfmedip_r.yml'
     params:
