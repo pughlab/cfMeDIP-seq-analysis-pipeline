@@ -1,0 +1,9 @@
+F19K16_F24B22_methyl_qc	Total_reads	41227
+F19K16_F24B22_methyl_qc	Unmapped_reads	0
+F19K16_F24B22_methyl_qc	Num_reads_align_methyl_F19K16	378
+F19K16_F24B22_methyl_qc	Num_reads_align_unmethyl_F24B22	8
+F19K16_F24B22_methyl_qc	Pctg_reads_aligned_to_BACs	.93600
+F19K16_F24B22_methyl_qc	Pctg_BACs_is_methyl_F19K16	97.92700
+F19K16_F24B22_methyl_qc	Pctg_BACs_is_unmethyl_F24B22	2.07200
+F19K16_F24B22_methyl_qc	Methylation_specificity	99.97885
+F19K16_F24B22_methyl_qc	Methylation_beta	.97927
