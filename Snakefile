@@ -551,7 +551,7 @@ rule medips_qc:
     input:
         path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup_hg38only.bam',
     output:
-        csv = temp(path_to_data + '/{cohort}/qc/medips_qc/{sample}_QC_MEDIPS.csv'),
+        csv = path_to_data + '/{cohort}/qc/medips_qc/{sample}_QC_MEDIPS.csv',
     params:
         outdir = lambda wildcards, output: '/'.join(output.csv.split('/')[0:-1]),
         winsize = config['pipeline_params']['window_size'],
@@ -569,7 +569,7 @@ rule CollectGcBiasMetrics:
     output:
         metric = path_to_data + '/{cohort}/qc/picard_qc/{sample}.gc_bias_metrics.txt',
         chart = path_to_data + '/{cohort}/qc/picard_qc/{sample}.gc_bias_metrics.pdf',
-        summary = temp(path_to_data + '/{cohort}/qc/picard_qc/{sample}.gc_bias_summary_metrics.txt'),
+        summary = path_to_data + '/{cohort}/qc/picard_qc/{sample}.gc_bias_summary_metrics.txt',
     params:
         fasta = config['data']['defaults']['hg38only_genome'],
     resources: cpus=1, mem_mb=30000, time_min='5:00:00'
@@ -595,7 +595,7 @@ rule MarkDuplicates_QC:
         path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup_hg38only.bam',
     output:
         markdup_bam = temp(path_to_data + '/{cohort}/qc/picard_qc/{sample}.picardMarkDup.bam'),
-        metric = temp(path_to_data + '/{cohort}/qc/picard_qc/{sample}.marked_dup_metrics.txt'),
+        metric = path_to_data + '/{cohort}/qc/picard_qc/{sample}.marked_dup_metrics.txt',
     resources: cpus=1, mem_mb=30000, time_min='5:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
@@ -606,7 +606,7 @@ rule CollectAlignmentSummaryMetrics:
     input:
         path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup_hg38only.bam',
     output:
-        metric = temp(path_to_data + '/{cohort}/qc/picard_qc/{sample}.alignmentMetrics.txt'),
+        metric = path_to_data + '/{cohort}/qc/picard_qc/{sample}.alignmentMetrics.txt',
     params:
         fasta = config['data']['defaults']['hg38only_genome'],
     resources: cpus=1, mem_mb=30000, time_min='5:00:00'
@@ -619,7 +619,7 @@ rule CollectQualityYieldMetrics:
     input:
         path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup_hg38only.bam',
     output:
-        metric = temp(path_to_data + '/{cohort}/qc/picard_qc/{sample}.quality_yield_metrics.txt'),
+        metric = path_to_data + '/{cohort}/qc/picard_qc/{sample}.quality_yield_metrics.txt',
     resources: cpus=1, mem_mb=30000, time_min='5:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
@@ -630,8 +630,8 @@ rule F19K16_F24B22_QC:
     input:
         path_to_data + '/{cohort}/results/bam_markdup/{sample}.aligned.sorted.markdup.bam',
     output:
-        methyl_counts = temp(path_to_data + '/{cohort}/qc/methyl_qc/{sample}.methyl_counts'),
-        methyl_summary = temp(path_to_data + '/{cohort}/qc/methyl_qc/{sample}.methyl_summary.txt'),
+        methyl_counts = path_to_data + '/{cohort}/qc/methyl_qc/{sample}.methyl_counts',
+        methyl_summary = path_to_data + '/{cohort}/qc/methyl_qc/{sample}.methyl_summary.txt',
     resources: cpus=1, mem_mb=16000, time_min='2:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
@@ -662,7 +662,7 @@ rule QC_out:
     resources: cpus=1, mem_mb=1000, time_min='00:01:00'
     conda: 'conda_env/samtools.yml'
     shell:
-        'cat {input.medips_qc} {input.F19K16_F24B22_methyl_summary}.parsed {input.picard_gcbias_summary}.parsed {input.picard_insertsize_metric}.parsed {input.picard_markdup_metric}.parsed {input.picard_alignment_metric}.parsed {input.picard_quality_metric}.parsed > {output.full_qc} && rm {input.F19K16_F24B22_methyl_summary}.parsed {input.picard_gcbias_summary}.parsed {input.picard_insertsize_metric}.parsed {input.picard_markdup_metric}.parsed {input.picard_alignment_metric}.parsed {input.picard_quality_metric}.parsed'
+        'cat {input.medips_qc} {input.F19K16_F24B22_methyl_summary}.parsed {input.picard_gcbias_summary}.parsed {input.picard_insertsize_metric}.parsed {input.picard_markdup_metric}.parsed {input.picard_alignment_metric}.parsed {input.picard_quality_metric}.parsed > {output.full_qc}'
 
 
 # ------------------------------------------ #
