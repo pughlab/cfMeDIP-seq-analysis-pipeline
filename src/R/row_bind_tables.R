@@ -15,12 +15,13 @@ Options:
 ' -> doc
 
 library(docopt)
+
+args <- docopt(doc)
+
 library(plyr)
 library(readr)
 library(doParallel)
 library(arrow)
-args <- docopt(doc)
-print(args)
 
 if ( ! is.null(args[['paths']]) ) {
     paths = strsplit(args[['paths']], ',')[[1]]
@@ -33,6 +34,8 @@ if ( ! is.null(args[['paths']]) ) {
 }
 
 paths <- unique(paths)
+
+Sys.setenv("VROOM_CONNECTION_SIZE" = 131072 * 5)
 
 message('Merging files')
 

@@ -9,6 +9,9 @@ configfile: "config.yml"
 #  Important Shared Functions  #
 # ---------------------------- #
 
+fragment_length_windows = pd.read_csv('data/manual/fragment_length_windows.tsv', delimiter='\t')
+fragment_length_windows_list = (fragment_length_windows.chr + '-' + fragment_length_windows.start.astype(str) + '-' + fragment_length_windows.end.astype(str)).tolist()
+
 def get_active_cohorts():
     """Returns a list of active cohorts.
     Active cohorts are defined in config.yml data > cohorts > [cohortname] > active: True
@@ -120,29 +123,35 @@ def get_cohort_signature_pairs(bed=False):
 
 rule all:
     input:
-        ['{output_dir}/pipeline/{cohort}/results/qc/{sample}_qc_complete'.format(
-            output_dir = get_cohort_outdir(cohort),
-            cohort = cohort,
-            sample = sample
-            ) for cohort,sample in get_all_samples_with_cohorts()
-        ],
-        ['{output_dir}/pipeline/{cohort}/results/aggregated/all_insertsize.tsv'.format(
-            output_dir = get_cohort_outdir(cohort),
-            cohort = cohort
+        #['{output_dir}/pipeline/{cohort}/results/qc/{sample}_qc_complete'.format(
+        #    output_dir = get_cohort_outdir(cohort),
+        #    cohort = cohort,
+        #    sample = sample
+        #    ) for cohort,sample in get_all_samples_with_cohorts()
+        #],
+        #['{output_dir}/pipeline/{cohort}/results/aggregated/all_insertsize.tsv'.format(
+        #    output_dir = get_cohort_outdir(cohort),
+        #    cohort = cohort
+        #    ) for cohort in get_active_cohorts()
+        #],
+        #[
+        #    '{}/{}/results/aggregated/all_bedpe/{}.tsv'.format(output_dir, cohort, signature)
+        #    for output_dir, cohort, signature in get_cohort_signature_pairs(bed=True)
+        #],
+        [
+            '{output_dir}/{cohort}/results/aggregated/fragment_length_windows.feather'.format(
+                output_dir = get_cohort_outdir(cohort),
+                cohort = cohort
             ) for cohort in get_active_cohorts()
         ],
-        [
-            '{}/pipeline/{}/results/aggregated/all_bedpe/{}.tsv'.format(output_dir, cohort, signature)
-            for output_dir, cohort, signature in get_cohort_signature_pairs(bed=True)
-        ],
-        expand(
-            [
-            '{}/pipeline/{}/results/extract_signature_matrix/{}-{}-{{valuetype}}.parquet'.format(output_dir, cohort, cohort, signature)
-                for output_dir, cohort, signature in get_cohort_signature_pairs()
-            ],
-            valuetype = ['coverage', 'posterior']
-            #valuetype = ['coverage', 'posterior', 'medestrand']
-        )
+        #expand(
+        #    [
+        #    '{}/{}/results/extract_signature_matrix/{}-{}-{{valuetype}}.parquet'.format(output_dir, cohort, cohort, signature)
+        #        for output_dir, cohort, signature in get_cohort_signature_pairs()
+        #    ],
+        #    valuetype = ['coverage', 'posterior']
+        #    #valuetype = ['coverage', 'posterior', 'medestrand']
+        #),
 
 # ------------------------------------------ #
 #  Install conda dependencies automatically  #
@@ -402,27 +411,36 @@ rule merge_bam:
                 lib=get_libraries_of_sample(wildcards.sample)
         )
     output:
-        bam = temp('{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam'),
-        index = temp('{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam.bai'),
-        stat = '{output_dir}/pipeline/{cohort}/results/merge_bam/{sample}.aligned.sorted.bam.stat.txt'
+        temp('{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam'),
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
-        'samtools merge {output.bam} {input} && '
-        'samtools index -@ {threads} {output.bam} && '
-        'samtools stats -@ {threads} {output.bam} > {output.bam_stat} '
+        'samtools merge {output} {input} '
+
+rule index_merged_bam:
+    input:
+        '{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam',
+    output:
+        temp('{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam.bai')
+    resources: cpus=1, mem_mb=8000, time_min='2:00:00'
+    threads: 12
+    conda: 'conda_env/samtools.yml'
+    shell:
+        'samtools index -@ {threads} {input} '
 
 # We next deduplicate with UMItools.
 rule bam_umitools_dedup:
     input:
-        '{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam'
+        bam='{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam',
+        index='{output_dir}/pipeline/{cohort}/tmp/merge_bam/{sample}.aligned.sorted.bam.bai'
     output:
-        bam = temp('{output_dir}/pipeline/{cohort}/results/bam/{sample}_tmp.bam')
+        bam = temp('{output_dir}/pipeline/{cohort}/results/bam/{sample}_tmp.bam'),
     params:
         stat_prefix = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup',
     conda: 'conda_env/umitools.yml'
+    resources: cpus=1, mem_mb=30000, time_min='5-00:00:00'
     shell:
-        'umi_tools dedup --paired -I {input} -S {output.bam} --umi-separator="_" --output-stats={params.stat_prefix}'
+        'umi_tools dedup --paired -I {input.bam} -S {output.bam} --umi-separator="_" --output-stats={params.stat_prefix}'
 
 # We apply some filters to the reads, yielding final BAM file
 rule finalize_bam:
@@ -430,13 +448,60 @@ rule finalize_bam:
         '{output_dir}/pipeline/{cohort}/results/bam/{sample}_tmp.bam',
     output:
         bam = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
-        index = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
-        bam_stat = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.stats.txt',
     conda: 'conda_env/samtools.yml'
     shell:
         'samtools view -b -f 2 -F 2828 --threads {threads} {input} > {output.bam} && '
-        'samtools index -@ {threads} {output.bam} && '
-        'samtools stats -@ {threads} {output.bam} > {output.bam_stat} '
+
+rule index_final_bam:
+    input:
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+    output:
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
+    resources: cpus=1, mem_mb=8000, time_min='2:00:00'
+    threads: 12
+    conda: 'conda_env/samtools.yml'
+    shell:
+        'samtools index -@ {threads} {input} '
+
+# Extract fragment length data
+# in 5 Mb windows
+rule fragment_length_windows:
+    input:
+        bam = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        index = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
+        windows = "data/manual/fragment_length_windows.tsv"
+    output:
+        '{output_dir}/pipeline/{cohort}/tmp/fragment_length_windows/{sample}.tsv',
+    resources: cpus=1, mem_mb=8000, time_min='4:00:00'
+    conda: 'conda_env/samtools.yml'
+    shell:
+        "python src/python/fragment_lengths.py "
+        "-b {input.bam} "
+        "-w {input.windows} "
+        "-o {output} "
+
+rule fragment_length_windows_paths:
+    input:
+        lambda wildcards: expand(
+            '{{output_dir}}/pipeline/{{cohort}}/tmp/fragment_length_windows/{sample}.tsv',
+            sample = get_cohort_data(wildcards.cohort).sample_name.unique().tolist(),
+        )
+    output:
+        '{output_dir}/pipeline/{cohort}/tmp/fragment_length_windows_paths/paths.txt',
+    resources: cpus=1, mem_mb=8000, time_min='1:00:00'
+    run:
+        with open(output[0], 'w') as out:
+            out.write('\n'.join(input))
+
+rule fragment_length_windows_aggregate:
+    input:
+        '{output_dir}/pipeline/{cohort}/tmp/fragment_length_windows_paths/paths.txt',
+    output:
+        '{output_dir}/pipeline/{cohort}/results/aggregated/fragment_length_windows.feather',
+    resources: cpus=1, mem_mb=8000, time_min='1:00:00'
+    conda: 'conda_env/cfmedip_r.yml'
+    shell:
+        'Rscript src/R/row_bind_tables.R -p {input} -o {output} --in-tsv --out-feather'
 
 # Bam markdup and create index. 
 # Now superseded by UMItools dedup above
@@ -459,7 +524,8 @@ rule finalize_bam:
 # Run FASTQC on final BAM files.
 rule fastqc_bam:
     input:
-        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        bam='{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        index = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
     output:
         html = '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup_fastqc.html',
         zipfile = '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup_fastqc.zip',
@@ -468,30 +534,33 @@ rule fastqc_bam:
         outdir = lambda wildcards, output: '/'.join(output.html.split('/')[0:-1])
     conda: 'conda_env/fastqc.yml'
     shell:
-        'fastqc --outdir {params.outdir} {input}'
+        'fastqc --outdir {params.outdir} {input.bam}'
 
 # Run Qualimap QC metrics on final BAM files.
 rule qualimap_bam:
     input:
         '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
     output:
         html = '{output_dir}/pipeline/{cohort}/results/qc/qualimap_{sample}/qualimapReport.html',
     params:
         outdir = lambda wildcards, output: '/'.join(output.html.split('/')[0:-1])
     conda: 'conda_env/qualimap.yml'
+    resources: cpus=1, mem_mb=10000, time_min='24:00:00'
     shell:
-        'qualimap bamqc -bam {input} -outdir {params.outdir}'
+        'qualimap bamqc -bam {input[0]} -outdir {params.outdir} --java-mem-size=8G'
 
 # Run Flagstat to get basic stats on final BAM files.
 rule bam_flagstat:
     input:
         '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
     output:
         '{output_dir}/pipeline/{cohort}/results/qc/{sample}.aligned.sorted.dedup.bam.flagstat',
     resources: cpus=1, mem_mb=8000, time_min='1:00:00'
     conda: 'conda_env/samtools.yml'
     shell:
-        'samtools flagstat {input} > {output}'
+        'samtools flagstat {input[0]} > {output}'
 
 # Unified QC rule which runs all of the above QCs
 rule bam_qc:
@@ -514,6 +583,7 @@ rule bam_qc:
 rule bam_bin_stats:
     input:
         '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
     output:
         binstat = temp('{output_dir}/pipeline/{cohort}/tmp/bam_bin_stats/bin_stats_{sample}_{species}_{chrom}.tsv'),
         filtered = '{output_dir}/pipeline/{cohort}/results/bam_bin_stats/removed_bins_{sample}_{species}_{chrom}.tsv',
@@ -524,7 +594,7 @@ rule bam_bin_stats:
     shell:
         clean('''
         Rscript src/R/bin_stats.R
-            -b {input}
+            -b {input[0]}
             -g {params.bsgenome}
             -c {wildcards.chrom}
             -o {output.binstat}
@@ -557,6 +627,7 @@ rule bam_to_chr_signature_bedpe:
     input:
         signature = lambda wildcards: get_cohort_config(wildcards.cohort)['signatures_bed'][wildcards.signature],
         bam = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        index = '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
     output: 
         temp('{output_dir}/pipeline/{cohort}/tmp/bam_to_chr_signature_bedpe/{sample}/{signature}/{chromosome}.bedpe'),
     resources: cpus=1, mem_mb=16000, time_min='24:00:00'
@@ -575,14 +646,15 @@ rule signature_bedpe:
 
 rule insert_size_distribution:
     input:
-        '{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        bam='{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam',
+        index='{output_dir}/pipeline/{cohort}/results/bam/{sample}.aligned.sorted.dedup.bam.bai',
     output:
         txt = '{output_dir}/pipeline/{cohort}/results/insert_size_distribution/{sample}.picard.insertsize.txt',
         pdf = '{output_dir}/pipeline/{cohort}/results/insert_size_distribution/{sample}.picard.insertsize.pdf',
     conda: 'conda_env/samtools.yml'
     resources: cpus=1, mem_mb=8000, time_min='24:00:00'
     shell:
-        'picard CollectInsertSizeMetrics I={input} O={output.txt} H={output.pdf}'
+        'picard CollectInsertSizeMetrics I={input.bam} O={output.txt} H={output.pdf}'
 
 rule all_bedpe:
     input:

@@ -4,5 +4,7 @@ channels:
 dependencies:
   - samtools
   - bcftools
+  - bedtools
   - picard
   - bwa
+  - docopt

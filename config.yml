@@ -120,7 +120,7 @@ data:
       active: True
     awadalla-breast:
       samplesheet: data/manual/samplesheets/awadalla_breast_samplesheet.csv
-      active: False
+      active: True
       settings:
         output_dir: '/cluster/projects/pughlab/projects/cfmedip_pipeline'
     kuihcc-normal:

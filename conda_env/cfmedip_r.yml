@@ -19,4 +19,5 @@ dependencies:
   - bioconductor-genomicranges
   - bioconductor-tcgabiolinks
   - bioconductor-minfi
+  - bioconductor-qsea
   - bioconductor-medips

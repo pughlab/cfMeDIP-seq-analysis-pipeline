@@ -2,13 +2,12 @@
 Fit bins from cfMeDIP-seq data using negative binomial regression.
 
 Usage:
-    cfmedip_nbglm.R -i INPUT -o OUTPUT [ --method METHOD --modelout MODELOUT ]
+    cfmedip_nbglm.R -i INPUT -o OUTPUT [ --modelout MODELOUT ]
 
 Options:
     -i --input INPUT            Path to bin data output by bin_stats.R
     -o --output OUTPUT          Output path for the table of fit bins (.feather format)
 
-    --method METHOD             Default is MCMC. Can specify LBFGS, BFGS, Newton, or VB.
     --modelout MODELOUT         Path into which to dump a .Rds file containing the final
                                     model specifications and the coefficients used in
                                     each iteration.
@@ -39,9 +38,9 @@ bins <- read_feather(args[['input']]) %>%
     bin_start = as.integer(bin_start),
     bin_end = as.integer(bin_end),
     cpg_count = as.integer(cpg_count),
-    coverage_int = mean_coverage %>% round %>% as.integer
+    coverage_int = fractional_reads %>% round %>% as.integer
   ) %>%
-  filter(mean_coverage > 0 | gc_content > 0 | cpg_count > 0) %>%
+  filter(coverage_int > 0 | gc_content > 0 | cpg_count > 0) %>%
   mutate(
     cpg_bin = factor(round(round(cpg_count * 20 / max(cpg_count)) * max(cpg_count) / 20)),
     gc_bin = factor(round(gc_content * 4, 1) / 4)
@@ -103,7 +102,7 @@ zero_theta_fit <- lm(
 
 ##
 ## Begin fitting of CpG by making an initial estimate based on
-##      mean_coverage = exp(b_0 + b_1 * cpg_count + b_2 * gc_content)
+##      coverage = exp(b_0 + b_1 * cpg_count + b_2 * gc_content)
 ## setting b_1 to 0.5, b_2 to 0, and allowing theta to vary as 0.5 * cpg_count.
 ##
 
@@ -148,8 +147,9 @@ for (i in 1:MAX_ITER) {
   ##
 
   methylated_bins_nbfit <- glm.nb(
-    coverage_int ~ cpg_count * gc_content,
-    data = bin_methylation_subset
+    coverage_int ~ cpg_count,
+    data = bin_methylation_subset,
+    link = 'sqrt'
   )
   methylated_fits[[i]] = methylated_bins_nbfit
 
@@ -162,7 +162,7 @@ for (i in 1:MAX_ITER) {
       unmethylated_mu = exp(predict(zero_mu_fit, newdata = .)),
       unmethylated_theta = exp(predict(zero_theta_fit, newdata = .)),
       unmethylated_likelihood = dnbinom(coverage_int, mu = unmethylated_mu, size = unmethylated_theta),
-      methylated_mu = ifelse(cpg_count == 0, NA, exp(predict(methylated_bins_nbfit, newdata = .))),
+      methylated_mu = ifelse(cpg_count == 0, NA, (predict(methylated_bins_nbfit, newdata = .))^2),
       methylated_theta = methylated_bins_nbfit$theta,
       methylated_likelihood = ifelse(is.na(methylated_mu), 0, dnbinom(coverage_int, mu = methylated_mu, size = methylated_theta)),
       unmethylated_posterior = unmethylated_likelihood / (methylated_likelihood + unmethylated_likelihood),

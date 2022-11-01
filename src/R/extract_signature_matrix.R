@@ -85,7 +85,7 @@ for (p in paths) {
     if (is.null(merged_data)) {
         merged_data <- overlap_result
     } else {
-        merged_data <- full_join(merged_data, overlap_result, by=c('bin_chr', 'bin_start', 'bin_end', additional_signature_cols))
+        merged_data <- full_join(merged_data, overlap_result, by=c('bin_chr', 'bin_start', 'bin_end', 'chromStart', 'chromEnd', additional_signature_cols))
     }
 }
 
