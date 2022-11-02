@@ -1,0 +1,2 @@
+Total_reads	Unmapped_reads	Num_reads_align_methyl_F19K16	Num_reads_align_unmethyl_F24B22	Pctg_reads_aligned_to_BACs	Pctg_BACs_is_methyl_F19K16	Pctg_BACs_is_unmethyl_F24B22	Methylation_specificity	Methylation_beta
+41227	0	378	8	.93600	97.92700	2.07200	99.97885	.97927
